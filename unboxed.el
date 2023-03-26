@@ -416,7 +416,7 @@ of the unboxed package's data directory as a string."
 (defun unboxed--pcase-replace-sexpr-p (sexpr replacement) nil)
 
 ;; assumes parse-sexp-ignore-comments is t
-(defun unboxed--back-sexpr (v p0 p2)
+(defun unboxed--back-sexpr (v p0)
   (let ((p2 (point))
 	p1)
     ;; check for named unicode character that is not handled well by emacs-lisp-mode (forward-sexp -1)
@@ -453,9 +453,92 @@ of the unboxed package's data directory as a string."
     p1))
        
 (defun unboxed--replace-text-in-region (start end new)
-  (goto-char end)
-  (delete-region start end)
-  (insert new))
+  "Utility function for replacing region with specified string.
+If point is inside the region, it will be at the end of the region following the replacement"
+  (if (and (< (point) end) (> (point start)))
+      (goto-char end))
+  (save-excursion
+    (goto-char end)
+    (delete-region start end)
+    (insert new)))
+
+;; assumes preceding character is \#
+(defun unboxed--check-invalid-read-graph-occurence (pos0)
+  "Utility function for checking if reader failed due to encountering bare #N#"
+  (let ((p2 (point))
+	p0 p1 N retval)
+    (save-excursion
+      (forward-char -1)
+      (setq p1 (point))
+      (search-backward "#" pos0 t)
+      (when (< (point) p1)
+	(setq p0 (point))
+	(forward-char 1)
+	(ignore-error
+	    (setq N (read (current-buffer))))
+	(when (and N (natnump N) (>= (point) p1))
+	  (setq retval p0))))
+    retval))
+
+;; assumes preceding character is either \) or \]
+(defun unboxed--check-invalid-non-atomic (pos0)
+  "Utility function for checking if reader failed due to encountering a non-atomic
+sexpr containing a #N#."
+  (let ((p2 (point))
+	(close (preceding-char))
+	open p1)
+    (setq open
+	  (if (eq close ?\])
+	      "["
+	    "("))
+    (save-excursion
+      (setq p1 (unboxed--back-sexpr nil pos0))
+      ;; not infallibly correct, but good enough for non-pathological cases
+      (unless (search-forward open p2 t)
+	(setq p1 nil))
+      p1)))
+
+(defun unboxed--check-invalid-read (pos0)
+  (let (p1)
+    (cond
+     ((eq (preceding-char ?\#)) ; check for #N#
+      (setq p1 (unboxed--check-invalid-read-graph-occurence pos0)))
+     ((or (eq (preceding-char ?\)))
+	  (eq (preceding-char ?\]))) ; check for non-atomic
+      (setq p1 (unboxed--check-invalid-non-atomic pos0))))
+    p1))
+
+;;  unboxed--pcase-replace-next-sexpr calls read from point to skip any comments and get the value
+;;  represented by the text for testing.
+;;  It then attempts to identify the beginning of the textual representation
+;;  using unboxed--back-sexpr before testing for replacement
+;;  We assume the (possibly narrowed) current buffer contains a valid elisp program
+;;  Given that, read will still signal an error in two cases:
+;;  1) When the EOF is reached - read has no other mechanism for indicating all
+;;     expressions have been read
+;;  2) Due to syntax that is valid as a subexpression of some sexpr, but not
+;;     as a stand-alone expression.  
+;;     a) Graph notation #N# represents an *occurence* of an object represented elsewhere
+;;        Hence we treat the traversal of this notation as a successful reading of the
+;;        corresponding expression, although this prevents pcase testing from being performed on
+;;        any containing sexpr
+;;     b) Graph notation #N= defining a graph object.  In this case we attempt to read the following
+;;        object since the #N= does not itself correspond to any object occurence.
+;;     c) The dot in a dotted pair representation of a cons cell.  In this case we attempt to read
+;;        the following sexpr as the dot does not correspond to any constructed object.
+;;     d) Any non-atomic object failing due to containing an undefined #N# notation, though such
+;;        a definition must have occured if the top-level expression was successfully read.
+;;  Note the lack of recording graph notation values means  that pcase testing is not truly done
+;;  *inside* circular objects in the elisp source code.
+;;
+;;  In this implementation, there are 3 main positions of concern:
+;;  position 0 - the initial value of point before calling read
+;;  position 2 - the position immediately following the last character of an expression
+;;  position 1 - the position immediately preceding the first character of the text
+;;               representing the value which is going to be tested and possibly replaced
+;;
+;;  
+;;  Every position 0 is either the beginning of the buffer or position 2 of some processed value
 
 (defun unboxed--pcase-replace-next-sexpr ()
   "Perform matching/replacement in the region containing the first sexpr
@@ -469,61 +552,28 @@ The search will recurse if the sexpr is a list or vector."
 	  ;; this will error if there are no additional expressions found
 	  (setq v (read (current-buffer))
 		pos2 (point))
-	;; this will happen if we are reading a list containing explicit dotted pair notation
-	;; or printed graph representation #N# or #N=
-	;; if #N#, then count it as a read sexpr, otherwise try again from point
-	;; though, we ignore the case where #N# occurs in a subexpression
-	;; that does not contain the corresponding definition.
 	(invalid-read-syntax
-	 (cond
-	  ((eq (preceding-char ?\#))
-	   (let ((p2 (point))
-		 p0 p1 N)
-	     (save-excursion
-	       (forward-char -1)
-	       (setq p1 (point))
-	       (search-backward "#" pos0 t)
-	       (when (< (point) p1)
-		 (setq p0 (point))
-		 (forward-char 1)
-		 (ignore-error
-		     (setq N (read (current-buffer))))
-		 (when (and N (natnump N) (>= (point) p1))
-		   ;; arrange this to be treated as if the reader successfully read
-		   ;; an expression, and it has been fully processed
-		   ;; assuming graph object is assigned in some other sub-expression,
-		   ;; the replacer should test it there
-		   (setq v t)
-		   (setq pos1 p0)
-		   (setq pos2 p2))))))
-	  ((or (eq (preceding-char ?\)))
-	       (eq (preceding-char ?\))))
-	   ;; this may be the case where an sexpression contains an undefined graph reference
-	   (let ((p2 (point))
-		 p1)
-	     (setq p1 (unboxed--back-sexpr nil pos0 p2))
-	     (when p1
-	       (setq v t)
-	       (setq pos1 p1)
-	       (setq pos2 p2))))
-	  (t nil)))
-	;; otherwise should only happen if read encounters a closing delimiter or the EOF
+	 (let ((p1 (unboxed--check-invalid-read pos0)))
+	   (when p1
+	     (setq pos1 p1
+		   pos2 (point)))))
 	(error (setq eof t)))
       (cl-incf read-attempts))
     (when (and pos2 (not pos1))
-      (setq pos1 (unboxed--back-sexpr v pos0 pos2))
-      (setq m (unboxed--pcase-replace-matching-sexpr v))
+      ;; could push this into the cond clause for a successful
+      ;; match *if* matcher was guaranteed to have no side-effects
+      (setq pos1 (unboxed--back-sexpr v pos0 pos2)
+	    m (unboxed--pcase-replace-matching-sexpr v))
+      (goto-char pos2)
       (cond
        (m (unboxed--replace-text-in-region pos1 pos2 (car m)))
-       ((atom v) (goto-char pos2))
+       ((atom v) nil)
        ((or (listp v) (recordp v) (arrayp v))
-	(goto-char pos2)
 	(save-excursion
 	  (goto-char (scan-lists pos1 1 -1))
 	  (unboxed--pcase-replace-in-seq 0 (length v))
 	  (when (<= (point) pos1)
-	    (signal unboxed-replace-sexpr `[,v ,pos0 ,pos1 ,pos2 ,(point)]))))
-       (t (goto-char pos2))))
+	    (signal unboxed-replace-sexpr `[,v ,pos0 ,pos1 ,pos2 ,(point)]))))))
     (not eof)))
 
 (defun unboxed--pcase-replace-in-seq (i n)
@@ -531,16 +581,17 @@ The search will recurse if the sexpr is a list or vector."
     (unboxed--pcase-replace-next-sexpr)
     (cl-incf i)))
 
-;; search text in buffer for sexprs matching one of a supplied set of pcase patterns
+;; search text in current buffer for sexprs matching one of a supplied set of pcase patterns
 ;; if a match is found, replace the text with corresponding sexpr value
 ;; Replacement should not disturb relative position of the text surrounding the text
 ;; that produced the sexpr matching the supplied pcase pattern
-(defun unboxed--pcase-replace-sexpr-in-buffer ()
+(defun unboxed--pcase-replace-sexpr ()
   "Simple search and replace on sexprs to match common expressions used in defining data directory variables for packages."
   (emacs-lisp-mode)
-  (save-excursion
-    (goto-char (point-min))
-    (while (unboxed--pcase-replace-next-sexpr))))
+  (let ((parse-sexp-ignore-comments t))
+    (save-excursion
+      (goto-char (point-min))
+      (while (unboxed--pcase-replace-next-sexpr)))))
     
 (provide 'unboxed)
 ;;; unboxed.el ends here
