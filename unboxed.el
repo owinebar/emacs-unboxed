@@ -20,14 +20,24 @@
 
 ;;; Commentary:
 
-;; Unboxed installs packages in a single "packages" directory whenever possible
-;; 
+;; Unboxed installs packages in a single "packages" directory whenever
+;; possible.
+;;
+;; The update of autoloads and byte-compiling steps for elisp libraries are
+;; performed once per set of packages, rather than recompiling the
+;; quickstart file for each individual package installed.  When a
+;; large number of packages are installed, this is much more
+;; efficient.
+;;
+;; Theme and info files are installed in dedicated locations rather
+;; than growing the associated path variable.
 
 ;;; Code:
 
 (require 'package)
 (require 'cl-lib)
 (require 'seq)
+(require 'async)
 
 (defgroup unboxed nil
   "Manager for unboxed Emacs Lisp packages."
@@ -84,6 +94,14 @@ installed."
   (file-name-concat user-emacs-directory "data")
   "The directory in which package data directories for unboxed user
 packages will be installed." 
+  :type 'directory
+  :group 'unboxed)
+
+(defcustom unboxed-temp-directory
+  (file-name-concat user-emacs-directory "tmp")
+  "Directory for temporary files created during unboxed package
+operations.  An example would be the compilation logs for an 
+asynchronously byte-compiled library." 
   :type 'directory
   :group 'unboxed)
 
@@ -185,6 +203,11 @@ unboxed installation."
 	 (not (string-suffix-p "-package" base))
 	 (not (string-suffix-p "-autoloads" base)))))
 
+(defcustom unboxed-install-info-program "install-info"
+  "Path to install-info program"
+  :type 'file
+  :group 'unboxed)
+
 ;;; modules to install in the package lisp directory
 (defun unboxed-module-p (path)
   "Predicate for elisp modules contained in packages that should be
@@ -233,46 +256,291 @@ in the unboxed data directory for the package,
 to be executed last and just returns true."
   t)
 
+(defun unboxed--install-info-file-in-dir (installed-file)
+  "Utility for creating entry for an unboxed package info file in the dir file
+  for unboxed packages"
+  (let ((file (unboxed-installed-file-file installed-file))
+	(loc (unboxed-installed-file-category-location
+	      installed-file))
+	full-path info-dir info-file log-text)
+    (setq full-path (file-name-concat loc file))
+    (setq info-dir (file-name-directory full-path))
+    (setq info-file (file-name-nondirectory full-path))
+    (with-temp-buffer
+      (call-process unboxed-install-info-program nil t nil
+		    (shell-quote-argument
+		     (concat "--info-dir=" info-dir))
+		    (shell-quote-argument file))
+      (setq log-text (buffer-string)))
+    (setf (unboxed-installed-file-log installed-file) log-text)))
+
+(defun unboxed--async-byte-compile-library (pd cats installed-file)
+  "Function to byte compile an unboxed elisp library from a package.
+This function defines the following global symbols during compile, so
+a package may capture their value in an eval-when-compile form.
+  `unboxed-package' Name of the package being installed as a symbol
+  `unboxed-package-version' Version of the package being installed as
+  a string
+  `unboxed-package-box' Directory containing the unpacked archive of
+  the package
+  `unboxed-library-directory' Directory containing the top-level elisp
+  libraries of unboxed packages
+  `unboxed-theme-directory' Directory containing theme files from
+  unboxed packages
+  `unboxed-info-directory' Directory containing info files from
+  unboxed packages
+  `unboxed-package-data-directory' Package-specific directory
+  containing any other installed files from this package."
+  (let ((pkg-name (unboxed-installed-file-package installed-file))
+	(pkg-version (unboxed-installed-file-package-version installed-file))
+	(pkg-loc (unboxed-installed-file-package-location
+		  installed-file))
+	(cat (unboxed-installed-file-category installed-file))
+	(cat-loc (unboxed-installed-file-category-location
+		  installed-file))
+	(src (unboxed-installed-file-package-source installed-file))
+	(lib (unboxed-installed-file-file installed-file))
+	(libdir (unboxed--file-category-location
+		 (cdr (assq 'library cats))))
+	(themedir (unboxed--file-category-location
+		 (cdr (assq 'theme cats))))
+	(infodir (unboxed--file-category-location
+		  (cdr (assq 'info cats))))
+	(datadir  (unboxed--file-category-location
+		  (cdr (assq 'data cats))))
+	(elc-installed (unboxed-installed-file-struct-copy
+			installed-file))
+	(logfile
+	 (let ((temporary-file-directory unboxed-temp-directory))
+	   (make-temp-file (concat "compile-log-"
+				   (symbol-name pkg-name)
+				   "--"
+				   (file-name-nondirectory lib)
+				   "-"))))
+	log-text el-name elc-name)
+    (setq datadir (file-name-concat datadir (symbol-name pkg-name)))
+    (async-start
+     `(lambda ()
+	(require 'bytecomp)
+	(setq load-path ',load-path)
+	(setq unboxed-package ',pkg-name)
+	(setq unboxed-package-version ,pkg-version)
+	(setq unboxed-package-box ,pkg-loc)
+	(setq unboxed-library-directory ,libdir)
+	(setq unboxed-theme-directory ,themedir)
+	(setq unboxed-info-directory ,infodir)
+	(setq unboxed-package-data-directory ,datadir)
+	(byte-compile-file ,(file-name-concat cat-loc lib))
+	(let ((log-buffer (get-buffer byte-compile-log-buffer)))
+	  (when log-buffer
+	    (with-current-buffer log-buffer
+	      (write-region (point-min) (point-max) logfile)))))
+     (lambda (&optional dummy)
+       (with-temp-buffer
+	 (insert-file-contents logfile)
+	 (setq log-text (buffer-string)))
+       (setq el-name lib)
+       (setq elc-name
+	     ;; just in case
+	     (if (string= (file-name-extension el-name) "el")
+		 (concat el-name "c")
+	       (concat el-name ".elc")))
+       (setf (unboxed-installed-file-file elc-installed) elc-name)
+       (setf (unboxed-installed-file-log elc-installed) log-text)
+       `(,elc-installed)))))
+
+;;; install-action must take four arguments -
+;;;  the package name as a symbol
+;;;  the category name as a symbol
+;;;  the source file name and
+;;;  the location for installed files
+;;; install-action returns a list of file names actually installed
+;;; relative to the supplied location
+(defun unboxed--install-list (pd cat files install-action)
+  (let ((ls files)
+	(cat-loc (unboxed--file-category-location cat))
+	(cname (unboxed--file-category-name cat))
+	(pkg (unboxed--package-desc-name pd))
+	(pkg-loc (unboxed--package-desc-dir pd))
+	installed
+	file
+	installed-files
+	installed-file)
+    (while ls
+      (setq file (pop ls))
+      (setq basename (file-name-nondirectory file)
+	    relpath (file-name-directory file))
+      (setq installed-files
+	    (funcall install-action
+		     (file-name-concat pkg-loc file)
+		     cat-loc))
+      (while installed-files
+	(setq installed-file (pop installed-files))
+	(push (unboxed-installed-file-create :package pkg
+					     :category cname
+					     :file installed-file
+					     :pkg-path file)
+	      installed)))
+    installed))
+
+(defun unboxed--install-simple-copy (pkg cat file src-loc dst-loc)
+  (let ((dest (file-name-concat dst-loc (file-name-non-directory file)))
+	(src (file-name-concat src-loc file)))
+    (copy-file src dest t)
+    `(,dest)))
+
+(defun unboxed--install-pkg-relative-copy (pkg cat file src-loc dst-loc)
+  (let ((dest (file-name-concat dst-loc pkg file))
+	(src (file-name-concat src-loc file)))
+    (when (> (length (file-name-nondirectory file)) 0)
+      (make-directory (file-name-directory dest) t))
+    (copy-file src dest t)
+    `(,dest)))
+
+
+;;; "files" here are installed-file structs
+;;; remove-action takes the same arguments as an install-cation
+(defun unboxed--remove-list (pkgs cats files remove-action)
+  (let ((ls files)
+	cat
+	cat-loc
+	cname
+	pd pkg pkg-loc
+	deleted
+	file
+	removed-file)
+    (while ls
+      (setq installed-file (pop ls))
+      (setq pkg (unboxed--installed-file-package installed-file))
+      (setq pd (assoc pkg pkgs))
+      (setq pd (and pd (cdr pd)))
+      (unless pd
+	(signal 'unboxed-invalid-package `(,pkg ,pkgs)))
+      (setq pkg-loc (unboxed--package-desc-dir pd))
+      (setq cname (unboxed-installed-file-category cat))
+      (setq cat (assoc cname cats))
+      (setq cat (and cat (cdr cat)))
+      (unless cat
+	(signal 'unboxed-invalid-category `(,cname ,cats)))
+      (setq cat-loc (unboxed--file-category-location cat))
+      (setq removed-file
+	    (funcall remove-action
+		     pkg
+		     cname
+		     (unboxed--installed-file-file installed-file)
+		     pkg-loc
+		     cat-loc))
+      (setq deleted `(,@removed-file ,@deleted)))
+    deleted))
+
+(defun unboxed--remove-simple-delete (pkg cat file src-loc dst-loc)
+  (let ((dest (file-name-concat dst-loc (file-name-non-directory file)))
+	(src (file-name-concat src-loc file)))
+    (condition-case nil
+	(progn
+	  (and (file-exists-p dest)
+	       (delete-file dest))
+	  `(,installed-file))
+      (error ;; do nothing for now
+	 nil))))
+
+
 ;;; These installers are used for lists of files of a particular
 ;;; category for a specific package
-(defun unboxed-install-theme (pd loc files)
+;;; file names are given as relative paths to the package directory
+(defun unboxed-install-theme (pd cat files)
+  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
   
-  )
-(defun unboxed-install-library (pd loc files)
-  )
-(defun unboxed-install-module (pd loc files)
-  )
-(defun unboxed-install-info (pd loc files)
-  )
-(defun unboxed-install-data (pd loc files)
-  )
-(defun unboxed-install-theme (pd loc files)
+(defun unboxed-install-library (pd cat files)
+  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+
+(defun unboxed-install-module (pd cat files)
+  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+(defun unboxed-install-info (pd cat files)
+  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+(defun unboxed-install-data (pd cat files)
+  (let ((loc (unboxed--file-category-location cat))
+	(pkg (unboxed--package-desc-name pd)))
+    (make-directory (file-name-concat loc pkg) t))
+  (unboxed--install-list pd cat files #'unboxed--install-pkg-relative-copy))
+(defun unboxed-install-theme (pd cat files)
+  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+
+;;; These removers are used for lists of installed files
+(defun unboxed-remove-theme (pkgs cats files)
+  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
   
-  )
+(defun unboxed-remove-library (pkgs cats files)
+  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+
+(defun unboxed-remove-module (pkgs cats files)
+  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+
+(defun unboxed-remove-info (pkgs cats files)
+  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-data (pkgs cats files)
+  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+
+
 
 ;;; these functions are run with all the installed-file structs
 ;;; produced by a set of packages, after the above installers
 ;;; have completed for *all* the packages in that set.
-;;; 
-(defun unboxed-finalize-install-library (files)
-  )
-(defun unboxed-finalize-install-module (files)
-  )
-(defun unboxed-finalize-install-info (files)
-  )
-(defun unboxed-finalize-install-data (files)
-  )
-(defun unboxed-finalize-install-theme (files)
-  
+;;; Return installed-file structs for any additional files produced
+;;; during finalization that must be removed when uninstalling a
+;;; package, e.g. elc files
+;;;   all-cats is provided since the install locations vary between
+;;; system and user package sets. 
+
+;; rebuild the unboxed library autoloads and byte-compile
+;; the libraries
+(defun unboxed-finalize-install-library (all-cats cat files)
   )
 
+;; rebuild the directory file
+(defun unboxed-finalize-install-info (all-cats cat files)
+  )
+
+;; other categories require no additional work
+(defun unboxed-finalize-install-module (all-pkgs all-cats cat files)
+  nil)
+(defun unboxed-finalize-install-data (all-pkgs all-cats cat files)
+  nil)
+(defun unboxed-finalize-install-theme (all-pkgs all-cats cat files)
+  nil)
+
+(defun unboxed-finalize-remove-theme (all-pkgs all-cats files)
+  nil)
+  
+(defun unboxed-finalize-remove-library (all-pkgs all-cats files)
+  nil)
+
+(defun unboxed-finalize-remove-module (all-pkgs all-cats files)
+  nil)
+
+(defun unboxed-finalize-remove-info (all-pkgs all-cats files)
+  nil)
+
+(defun unboxed-finalize-remove-data (all-pkgs all-cats files)
+  nil)
+
 (defcustom unboxed-user-categories
-  `((theme unboxed-theme-p unboxed-user-theme-directory unboxed-install-theme unboxed-finalize-install-theme)
-    (library unboxed-library-p unboxed-user-library-directory unboxed-install-library unboxed-finalize-install-library)
-    (module unboxed-module-p unboxed-user-library-directory unboxed-install-module unboxed-finalize-install-module)
-    (info unboxed-info-p unboxed-user-info-directory unboxed-install-info unboxed-finalize-install-info)
-    (ignore unboxed-compiled-elisp-p nil nil nil)
-    (data unboxed-data-p unboxed-user-data-directory unboxed-install-data unboxed-finalize-install-data))
+  `((theme unboxed-theme-p unboxed-user-theme-directory
+	   unboxed-install-theme unboxed-finalize-install-theme
+	   unboxed-remove-theme unboxed-finalize-remove-theme)
+    (library unboxed-library-p unboxed-user-library-directory
+	     unboxed-install-library unboxed-finalize-install-library
+	     unboxed-remove-library unboxed-finalize-remove-library)
+    (module unboxed-module-p unboxed-user-library-directory
+	    unboxed-install-module unboxed-finalize-install-module
+	    unboxed-remove-module unboxed-finalize-remove-module)
+    (info unboxed-info-p unboxed-user-info-directory
+	  unboxed-install-info unboxed-finalize-install-info
+	  unboxed-remove-info unboxed-finalize-remove-info)
+    (ignore unboxed-compiled-elisp-p nil nil nil nil nil)
+    (data unboxed-data-p unboxed-user-data-directory
+	  unboxed-install-data unboxed-finalize-install-data
+	  unboxed-remove-data unboxed-finalize-remove-data))
   "Categories which determine where a file will be installed for user packages.
 A file will be classified according to the first predicate returning a non-nil value,
 with the order of testing determined by this list."
@@ -280,17 +548,33 @@ with the order of testing determined by this list."
 		       (function :tag "predicate")
 		       (choice (variable :tag "location")
 			       (const :tag "none" nil))
-		       (choice (function :tag "install-file")
+		       (choice (function :tag "install-files")
+			       (const :tag "none" nil))
+		       (choice (function :tag "finalize-install-files")
+			       (const :tag "none" nil))
+		       (choice (function :tag "remove-files")
+			       (const :tag "none" nil))
+		       (choice (function :tag "finalize-remove-files")
 			       (const :tag "none" nil))))
   :group 'unboxed)
 
 (defcustom unboxed-system-categories
-  `((theme unboxed-theme-p unboxed-system-theme-directory unboxed-install-theme unboxed-finalize-install-theme)
-    (library unboxed-library-p unboxed-system-library-directory unboxed-install-library unboxed-finalize-install-library)
-    (module unboxed-module-p unboxed-system-library-directory unboxed-install-module unboxed-finalize-install-module)
-    (info unboxed-info-p unboxed-system-info-directory unboxed-install-info unboxed-finalize-install-info)
-    (ignore unboxed-compiled-elisp-p nil nil nil)
-    (data unboxed-data-p unboxed-system-data-directory unboxed-install-data))
+  `((theme unboxed-theme-p unboxed-system-theme-directory
+	   unboxed-install-theme unboxed-finalize-install-theme
+	   unboxed-remove-theme unboxed-finalize-remove-theme)
+    (library unboxed-library-p unboxed-system-library-directory
+	     unboxed-install-library unboxed-finalize-install-library
+	     unboxed-remove-library unboxed-finalize-remove-library)
+    (module unboxed-module-p unboxed-system-library-directory
+	    unboxed-install-module unboxed-finalize-install-module
+	    unboxed-remove-module unboxed-finalize-remove-module)
+    (info unboxed-info-p unboxed-system-info-directory
+	  unboxed-install-info unboxed-finalize-install-info
+	  unboxed-remove-info unboxed-finalize-remove-info)
+    (ignore unboxed-compiled-elisp-p nil nil nil nil nil)
+    (data unboxed-data-p unboxed-system-data-directory
+	  unboxed-install-data unboxed-finalize-install-data
+	  unboxed-remove-data unboxed-finalize-remove-data))
   "Categories which determine where a file will be installed for system packages.
 A file will be classified according to the first predicate returning a non-nil value,
 with the order of testing determined by this list."
@@ -301,6 +585,10 @@ with the order of testing determined by this list."
 		       (choice (function :tag "install-files")
 			       (const :tag "none" nil))
 		       (choice (function :tag "finalize-install-files")
+			       (const :tag "none" nil))
+		       (choice (function :tag "remove-files")
+			       (const :tag "none" nil))
+		       (choice (function :tag "finalize-remove-files")
 			       (const :tag "none" nil))))
   :group 'unboxed-system)
 
@@ -312,6 +600,10 @@ with the order of testing determined by this list."
   :type '(choice (const :tag "Simple LISP object" sexpr))
   :group 'unboxed)
 
+(define-error 'unboxed-invalid-package
+  "Unrecognized package name")
+(define-error 'unboxed-invalid-category
+  "Unrecognized category name")
 (define-error 'unboxed-invalid-category-spec
   "One or more fields in a file category specification is invalid")
 
@@ -342,7 +634,8 @@ installation management"
     (unboxed--file-category-create cat pred dir install)))
 
 (cl-defstruct (unboxed--file-category
-               (:constructor unboxed--file-category-create))
+               (:constructor unboxed--file-category-create)
+	       (:copier unboxed--file-category-copy))
   "Structure for contents of package and each is installed.
   Slots:
   `name' name of file category as symbol
@@ -357,29 +650,45 @@ installation management"
          invocation of the installation process on a set of packages,
          e.g. updating the autoloads file in the unboxed package
          directory and byte-compiling the installed libraries with the
-         updated autoloads."
+         updated autoloads.
+  `remove-files' function to invoke when removing packages on
+         per-package basis
+  `finalize-remove-files' function to invoke when removing packages
+         after doing package-specific steps."
   name
   predicate
   location
-  install-file)
+  install-files
+  finalize-install-files
+  remove-files
+  finalize-remove-files)
 
 (cl-defstruct (unboxed-installed-file
-               (:constructor unboxed-installed-file-create))
+               (:constructor unboxed-installed-file-create)
+	       (:copier unboxed-installed-file-struct-copy))
   "Structure for a file that is installed for a package
   Slots:
   `package' name of package as symbol
-  `file' name of file as string
+  `package-location' directory providing boxed package contents
   `category' category of file as symbol
-  `pkg-path' location of file in directory of package contents
-  `install-path' location of file relative to the location of its category."
+  `category-location' directory containing installed file
+  `package-source' location of source file in directory of package contents
+  `file' location of file relative to category-location
+         may not be identical to source file, or even have the same
+               base name, e.g. byte-compiled files
+  `log' Any relevant data generated during the installation process
+        for this specific file"
   package
-  file
+  package-location
   category
-  pkg-path
-  install-path)
+  category-location
+  package-source
+  file
+  log)
 
 (cl-defstruct (unboxed--package-desc-layout
-               (:constructor unboxed--package-desc-layout-create))
+               (:constructor unboxed--package-desc-layout-create)
+	       (:copier unboxed--package-desc-layout-copy))
   "Record of the package-desc struct layout for instantiating structs
 from a file. This allows for updates in package.el that may change the
 layout of the struct in the current session.
@@ -391,6 +700,7 @@ layout of the struct in the current session.
 
 (cl-defstruct (unboxed--package-desc
                (:constructor unboxed--package-desc-create)
+	       (:copier unboxed--package-desc-copy)
 	       (:include package-desc))
   "Package desc structure extended with fields recording its
 installation manager 
@@ -399,7 +709,8 @@ installation manager
   manager)
 
 (cl-defstruct (unboxed--sexpr-db
-	       (:constructor unboxed--sexpr-db-create))
+	       (:constructor unboxed--sexpr-db-create)
+	       (:copier unboxed--sexpr-db-copy))
   "Structure holding the tables of data for unboxed in sexpr db representation"
   categories
   package-desc-layout
@@ -479,11 +790,12 @@ at either compile or load time.  Any matches will be hard-coded to be the value
 of the unboxed package's data directory as a string."
   :type '(repeat (sexpr :tag "pcase pattern"))
   :group unboxed
-  :setter #'unboxed--set-pcase-replace-sexpr-fxn
+  :setter #'unboxed--set-pcase-replace-sexpr-p
   )
+
 (define-error 'unboxed-replace-sexpr "Bad sexpr parse")
 
-(defun unboxed--set-pcase-replace-sexpr-fxn (patterns)
+(defun unboxed--set-pcase-replace-sexpr-p (patterns)
   (let* ((subst-var (make-symbol "value"))
 	 (sexpr-var (make-symbol "sexpr"))
 	 (clauses (mapcar (lambda (pattern)
@@ -498,7 +810,8 @@ of the unboxed package's data directory as a string."
       (prin1 defun-expr (current-buffer))
       (terpri (current-buffer))
       (goto-char 0)
-      ;; compile the defun and install it - do not display the result in the echo area
+      ;; compile the defun and install it - do not display the result
+      ;; in the echo area 
       (compile-defun t))))
     
     
@@ -551,7 +864,8 @@ of the unboxed package's data directory as a string."
        
 (defun unboxed--replace-text-in-region (start end new)
   "Utility function for replacing region with specified string.
-If point is inside the region, it will be at the end of the region following the replacement"
+If point is inside the region, it will be at the end of the region
+following the replacement" 
   (if (and (< (point) end) (> (point start)))
       (goto-char end))
   (save-excursion
@@ -596,6 +910,10 @@ sexpr containing a #N#."
       p1)))
 
 (defun unboxed--check-invalid-read (pos0)
+  "Utility function to check for whether an invalid-read-syntax
+error corresponded to a subexpression that should produce an
+object, and dispatching accordingly, or something like "." that is
+purely syntactic"
   (let (p1)
     (cond
      ((eq (preceding-char ?\#)) ; check for #N#
@@ -647,6 +965,11 @@ sexpr containing a #N#."
 ;;  Every position 0 is either the beginning of the buffer or position
 ;;  2 of some processed value.
 
+;;  FIXME - deal with quote, unquote and unquote-append syntaxes
+;;          correctly, since they produce lists of length two
+;;          Current implementation jumps into cadar of that pair
+;;          but traverses that value assuming it is a sequence of
+;;          length two.
 (defun unboxed--pcase-replace-next-sexpr ()
   "Perform matching/replacement in the region containing the first
   sexpr found in the current buffer following the point in the current
