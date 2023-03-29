@@ -124,6 +124,6 @@ to be executed last and just returns true."
 
 (provide 'unboxed-categories)
 
-;;; unboxed-decls.el ends here
+;;; unboxed-categories.el ends here
 
 ;; 
