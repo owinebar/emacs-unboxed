@@ -1,8 +1,9 @@
-;;; unboxed.el --- Unboxed package management        -*- lexical-binding: t; -*-
+;;; unboxed-rewrite-sexprs.el   -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
-;; Author: Onnie Winebarger;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@rapscallion>
+;; Author: Onnie Winebarger
+;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@gmail.com>
 ;; Keywords: extensions, lisp
 
 ;; This program is free software; you can redistribute it and/or modify

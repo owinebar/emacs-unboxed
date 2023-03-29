@@ -2,7 +2,8 @@
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
-;; Author: Onnie Winebarger;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@rapscallion>
+;; Author: Onnie Winebarger
+;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@gmail.com>
 ;; Keywords: extensions, lisp
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -232,6 +233,43 @@ installation."
     (data unboxed-data-p unboxed-site-data-directory
 	  unboxed-install-data unboxed-finalize-install-data
 	  unboxed-remove-data unboxed-finalize-remove-data)))
+
+(defcustom unboxed-data-directory-patterns
+  '()
+  "A list of pcase patterns that match against known expressions used to compute a packages installation directory
+at either compile or load time.  Any matches will be hard-coded to be the value
+of the unboxed package's data directory as a string."
+  :type '(repeat (sexpr :tag "pcase pattern"))
+  :group unboxed
+  :setter #'unboxed--set-pcase-replace-sexpr-p
+  )
+
+(defun unboxed--set-pcase-replace-sexpr-p (patterns)
+  (let* ((subst-var (make-symbol "value"))
+	 (sexpr-var (make-symbol "sexpr"))
+	 (clauses (mapcar (lambda (pattern)
+			    `(,pattern (list ,subst-var)))
+			  patterns))
+	 (defun-expr
+	   `(defun unboxed--pcase-replace-sexpr-p (,sexpr-var  ,subst-var) 
+	      (pcase ,sexpr-var
+		,@clauses
+		(_ nil)))))
+    (with-temp-buffer
+      (prin1 defun-expr (current-buffer))
+      (terpri (current-buffer))
+      (goto-char 0)
+      ;; compile the defun and install it - do not display the result
+      ;; in the echo area 
+      (compile-defun t))))
+    
+    
+;;  This predicate function will be redefined by the setter for the
+;;  pcase patterns for matching and replacing sexprs constructed by
+;;  setter of the customization variable 
+;;  if the sexpr is a match, the return value is a one-element list
+;;  containing the replacement value
+(defun unboxed--pcase-replace-sexpr-p (sexpr replacement) nil)
 
 (provide 'unboxed-custom)
 

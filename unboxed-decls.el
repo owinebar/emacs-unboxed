@@ -2,7 +2,8 @@
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
-;; Author: Onnie Winebarger;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@rapscallion>
+;; Author: Onnie Winebarger
+;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@gmail.com>
 ;; Keywords: extensions, lisp
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -153,6 +154,14 @@ installation manager
   `(list (symbol :tag "Area Name")
 	 (repeat :tag "Box Directories" directory)
 	 ,unboxed--sexpr-db-customization-type))
+
+    
+(define-error 'unboxed-invalid-package
+  "Unrecognized package name")
+(define-error 'unboxed-invalid-category
+  "Unrecognized category name")
+(define-error 'unboxed-invalid-category-spec
+  "One or more fields in a file category specification is invalid")
 
 (provide 'unboxed-decls)
 

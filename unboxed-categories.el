@@ -1,8 +1,9 @@
-;;; unboxed-decls.el        -*- lexical-binding: t; -*-
+;;; unboxed-categories.el        -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
-;; Author: Onnie Winebarger;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@rapscallion>
+;; Author: Onnie Winebarger
+;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@gmail.com>
 ;; Keywords: extensions, lisp
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -23,6 +24,8 @@
 ;; Functions for implementing file-category definitions
 
 ;;; Code:
+
+(require 'unboxed-decls)
 
 ;;; libraries to install in the package lisp directory
 (defun unboxed-library-p (path)
