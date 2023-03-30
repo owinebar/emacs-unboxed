@@ -33,39 +33,46 @@ or site packages
   Slots:
   `name' Name of the package area, e.g. user or site
   `boxes' Directories containing the boxed packages
+  `db-path' Path to the db file
   `db' The database structure for the area."
   name
   boxes
+  db-path
   db)
 
-  
+;; note - it's entirely possible for a site to have one version of unboxed installed
+;; and for a user to have another version installed.  Therefore, we record
+;; the layout of structures in structure itself to allow some forward/backward
+;; compatibility
 (cl-defstruct (unboxed--sexpr-db
 	       (:constructor unboxed--sexpr-db-create)
 	       (:copier unboxed--sexpr-db-copy))
   "Structure holding the tables of data for unboxed in sexpr db representation
    Slots:
+   `layouts' Association list of data structure layouts used in this db
+   `areas' Association list of area-config structs with db entries set to nil
    `categories' Assoc list of file-category descriptors keyed by category name
-   `package-desc-layout' Record of the base package-desc struct used by
-                         unboxed-package-descs in this database.
    `packages' Assoc list of unboxed-package-descs for unboxed packages in this
               area.
    `installed' Assoc list of unboxed-installed-file structs for each file
-               unboxed in the area.
-    `installed-by-cat' Assoc list keyed by category mapping to the list of
-               installed files for that category"
+              unboxed in the area."
+  layouts
+  areas
   categories
-  package-desc-layout
   packages
-  installed
-  installed-by-cat)
+  installed)
 
-  
-(cl-defstruct (unboxed--file-category
-               (:constructor unboxed--file-category-create)
-	       (:copier unboxed--file-category-copy))
+
+(cl-defstruct (unboxed-file-category
+               (:constructor unboxed-file-category-create)
+	       (:copier unboxed-file-category-copy))
   "Structure for contents of package and each is installed.
+Other than predicate, the function slots may be nil.
   Slots:
   `name' name of file category as symbol
+  `area' name of the area using this category definition
+  `path-variable' elisp variable for path associated with this
+         file category, nil if none  
   `predicate' predicate to classify file given full path
   `location' path for installing this file category
   `install-files' function to invoke with list of files,
@@ -83,6 +90,8 @@ or site packages
   `finalize-remove-files' function to invoke when removing packages
          after doing package-specific steps."
   name
+  area
+  path-variable
   predicate
   location
   install-files
@@ -95,7 +104,9 @@ or site packages
 	       (:copier unboxed-installed-file-struct-copy))
   "Structure for a file that is installed for a package
   Slots:
+  `area' name of the unboxing area
   `package' name of package as symbol
+  `package-version-string' version of package as a string
   `package-location' directory providing boxed package contents
   `category' category of file as symbol
   `category-location' directory containing installed file
@@ -105,6 +116,7 @@ or site packages
          base name, e.g. byte-compiled files
   `log' Any relevant data generated during the installation process
         for this specific file"
+  area
   package
   package-version-string
   package-location
@@ -114,21 +126,25 @@ or site packages
   file
   log)
 
-(cl-defstruct (unboxed--package-desc-layout
-               (:constructor unboxed--package-desc-layout-create)
-	       (:copier unboxed--package-desc-layout-copy))
-  "Record of the package-desc struct layout for instantiating structs
-from a file. This allows for updates in package.el that may change the
-layout of the struct in the current session.
+(cl-defstruct (unboxed--struct-layout
+               (:constructor unboxed--struct-layout-create)
+	       (:copier unboxed--struct-layout-copy))
+  "Record of struct layout for instantiating structs
+from a file.
   Slots:
+  `version' version of this struct
   `seq-type' Value of (cl-struct-sequence-type 'package-desc)
+  `keys' Keywords for use with constructor for the slot at
+         the corresponding index  
   `slot-info' Value of (cl-struct-slot-info 'pacakge-desc)"
+  (version 1 :read-only)
   seq-type
+  keys
   slot-info)
 
-(cl-defstruct (unboxed--package-desc
-               (:constructor unboxed--package-desc-create)
-	       (:copier unboxed--package-desc-copy)
+(cl-defstruct (unboxed-package-desc
+               (:constructor unboxed-package-desc-create)
+	       (:copier unboxed-package-desc-copy)
 	       (:include package-desc))
   "Package desc structure extended with fields recording its
 installation manager 
@@ -140,6 +156,8 @@ installation manager
 
 (defconst unboxed--file-category-customization-type
   `(list (symbol :tag "Name")
+	 (symbol :tag "Area")
+	 (choice :tag "Path Variable" symbol nil)
 	 (choice :tag "Predicate" symbol function)
 	 (choice :tag "Location" symbol directory nil)
 	 (choice :tag "install-files" symbol function nil)
@@ -152,16 +170,51 @@ installation manager
 
 (defconst unboxed--area-config-customization-type
   `(list (symbol :tag "Area Name")
-	 (repeat :tag "Box Directories" directory)
+	 (choice :tag "Box Directories"
+		 (symbol :tag "Variable")
+		 (repeat :tag "List"
+		  (choice (variable :tag "Variable")
+			  (directory :tag "Directory")
+			  nil)))
+	 (choice :tag "Path to DB"
+		 (variable :tag "Variable")
+		 (file "Filename"))
 	 ,unboxed--sexpr-db-customization-type))
 
-    
+(defun unboxed--make-keyword (fld)
+  (intern (concat ":" (symbol-name fld))))
+
+(defun unboxed--make-struct-layout (name)
+  (let ((seq-type (cl-struct-sequence-type name))
+	(slot-info (cl-struct-slot-info name))
+	keys)
+    (setq keys (mapcar (lambda (si) (unboxed--make-keyword (car si))) slot-info))
+    (unboxed--struct-layout-create
+     :seq-type seq-type
+     :keys keys
+     :slot-info slot-info)))
+
+(defvar unboxed--struct-layouts
+  (mapcar (lambda (name) `(,name . ,(unboxed-make-struct-layout name)))
+	  '(unboxed--struct-layout
+	    unboxed--area-config
+	    unboxed--sexpr-db
+	    unboxed-file-category
+	    unboxed-package-desc
+	    unboxed-installed-file))
+  "Association list of layout descriptors of the structs used in unboxed database files.")
+	    
 (define-error 'unboxed-invalid-package
   "Unrecognized package name")
 (define-error 'unboxed-invalid-category
   "Unrecognized category name")
 (define-error 'unboxed-invalid-category-spec
   "One or more fields in a file category specification is invalid")
+
+(defun unboxed--promote-package-desc (pd manager)
+  "Takes a packge-desc struct and returns and unboxed-package-desc struct"
+  
+  )
 
 (provide 'unboxed-decls)
 

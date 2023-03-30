@@ -31,7 +31,7 @@
 ;; efficient.
 ;;
 ;; Theme and info files are installed in dedicated locations rather
-;; than growing the associated path variable.
+;; than growing the associated path variable for each package
 
 ;;; Code:
 
@@ -46,22 +46,20 @@
 (require 'unboxed-rewrite-sexprs)
 (require 'unboxed-database)
 
-(defvar unboxed--packages-to-install
-  "List of packages to be unboxed once they are available as ordinary
-packages in the package directory"
-  nil)
 
-(defvar unboxed--packages-to-remove
-  "List of unboxed packages to be removed before removing the ordinary
-packages in the package directory"
-  nil)
+(defun unboxed-initial-setup ()
+  "Initialize unboxed package management system"
+  )
+(defun unboxed-activate ()
+  "Activate unboxed package management"
+  )
+(defun unboxed-deactivate ()
+  "Deactivate unboxed package management"
+  )
 
-(defvar unboxed--packages-to-rebox
-  "List of unboxed packages to be put back under the standard package
-installation management"
-  nil)
-
-(defvar unboxed--areas nil)
+(defun unboxed-unbox-packages (ls)
+  "Remove packages from unboxing areas"
+  )
 
     
 (provide 'unboxed)

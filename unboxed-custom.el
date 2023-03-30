@@ -42,25 +42,28 @@
   :group 'unboxed
   :version "24.1")
 
-(defcustom unboxed-user-db-path user-emacs-directory
+(defcustom unboxed-user-db-path
+  (file-name-concat user-emacs-directory "unboxed-packages.sexpr")
   "Directory in which the database tracking installed user packages
 will be stored" 
   :type 'directory
   :group 'unboxed-user)
-(defcustom unboxed-user-db-file "packages.sqlite"
-  "File name of database tracking installed user packages"
-  :type 'filename
-  :group 'unboxed-user)
-(defcustom unboxed-site-db-path data-directory
+(defcustom unboxed-site-db-path 
+  (file-name-concate data-directory "unboxed-site-packages.sexpr")
   "Directory in which the database tracking installed system packages
 will be stored" 
   :type 'directory
   :group 'unboxed-site)
-(defcustom unboxed-site-db-file "system-packages.sqlite"
-  "File name of database tracking installed system packages"
-  :type 'filename
-  :group 'unboxed-site)
 
+(defcustom unboxed-temp-directory
+  (file-name-concat user-emacs-directory "tmp")
+  "Directory for temporary files created during unboxed package
+operations.  An example would be the compilation logs for an 
+asynchronously byte-compiled library." 
+  :type 'directory
+  :group 'unboxed)
+
+;;; unboxed user area customizations
 (defcustom unboxed-user-package-archive package-user-dir
   "Directory in which unpacked user packages are found"
   :type 'directory
@@ -68,6 +71,18 @@ will be stored"
 (defcustom unboxed-user-library-directory
   (file-name-concat user-emacs-directory "lisp")
   "Directory in which unboxed elisp libraries from user packages will
+be installed.  Will be added to the load-path." 
+  :type 'directory
+  :group 'unboxed-user)
+(defcustom unboxed-user-byte-compiled-directory
+  (file-name-concat user-emacs-directory "lisp")
+  "Directory in which unboxed byte-compiled elisp libraries from user packages will
+be installed.  Will be added to the load-path." 
+  :type 'directory
+  :group 'unboxed-user)
+(defcustom unboxed-user-native-compiled-directory
+  (file-name-concat user-emacs-directory "eln-cache")
+  "Directory in which unboxed native-compiled elisp libraries from user packages will
 be installed.  Will be added to the load-path." 
   :type 'directory
   :group 'unboxed-user)
@@ -90,14 +105,7 @@ packages will be installed."
   :type 'directory
   :group 'unboxed-user)
 
-(defcustom unboxed-temp-directory
-  (file-name-concat user-emacs-directory "tmp")
-  "Directory for temporary files created during unboxed package
-operations.  An example would be the compilation logs for an 
-asynchronously byte-compiled library." 
-  :type 'directory
-  :group 'unboxed)
-
+;;; unboxed site area customizations
 (defcustom unboxed-site-directory
   (expand-file-name (file-name-concat data-directory ".."))
   "The version-specific directory in which emacs is installed"
@@ -127,6 +135,18 @@ found"
 will be installed" 
   :type 'directory
   :group 'unboxed-site)
+(defcustom unboxed-site--byte-compiled-directory
+  (file-name-concat unboxed-site-directory "site-lisp" "packages")
+  "Directory in which unboxed byte-compiled elisp libraries from site packages will
+be installed.  Will be added to the load-path." 
+  :type 'directory
+  :group 'unboxed-site)
+(defcustom unboxed-user-native-compiled-directory
+  (file-name-concat unboxed-site-directory "eln-cache" "packages")
+  "Directory in which unboxed native-compiled elisp libraries from site packages will
+be installed.  Will be added to the load-path." 
+  :type 'directory
+  :group 'unboxed-site)
 
 (defcustom unboxed-site-themes-directory
   (file-name-concat user-emacs-directory "site-themes")
@@ -148,6 +168,80 @@ be installed"
 packages will be installed." 
   :type 'directory
   :group 'unboxed-site)
+
+(defconst unboxed--default-user-categories
+  `((theme user custom-theme-load-path
+	   unboxed-theme-p unboxed-user-theme-directory
+	   unboxed-install-theme unboxed-finalize-install-theme
+	   unboxed-remove-theme unboxed-finalize-remove-theme)
+    (library user load-path
+	     unboxed-library-p unboxed-user-library-directory
+	     unboxed-install-library unboxed-finalize-install-library
+	     unboxed-remove-library unboxed-finalize-remove-library)
+    (byte-compiled user load-path
+		   unboxed-byte-compiled-p unboxed-user-byte-compiled-directory
+		   unboxed-install-byte-compiled unboxed-finalize-install-byte-compiled
+		   unboxed-remove-byte-compiled unboxed-finalize-remove-byte-compiled)
+    (native-compiled user native-comp-eln-load-path
+		     unboxed-native-compiled-p unboxed-user-native-compiled-directory
+		     unboxed-install-native-compiled unboxed-finalize-install-native-compiled
+		     unboxed-remove-native-compiled unboxed-finalize-remove-native-compiled)
+    (module user load-path
+	    unboxed-module-p unboxed-user-library-directory
+	    unboxed-install-module unboxed-finalize-install-module
+	    unboxed-remove-module unboxed-finalize-remove-module)
+    (info user Info-directory-list
+	  unboxed-info-p unboxed-user-info-directory
+	  unboxed-install-info unboxed-finalize-install-info
+	  unboxed-remove-info unboxed-finalize-remove-info)
+    (ignore user nil unboxed-compiled-elisp-p nil nil nil nil nil)
+    (data user nil
+	  unboxed-data-p unboxed-user-data-directory
+	  unboxed-install-data unboxed-finalize-install-data
+	  unboxed-remove-data unboxed-finalize-remove-data)))
+
+(defconst unboxed-default-site-categories
+  `((theme site custom-theme-load-path
+	   unboxed-theme-p unboxed-site-theme-directory
+	   unboxed-install-theme unboxed-finalize-install-theme
+	   unboxed-remove-theme unboxed-finalize-remove-theme)
+    (library site load-path
+	     unboxed-library-p unboxed-site-library-directory
+	     unboxed-install-library unboxed-finalize-install-library
+	     unboxed-remove-library unboxed-finalize-remove-library)
+    (byte-compiled site load-path
+		   unboxed-byte-compiled-p unboxed-site-byte-compiled-directory
+		   unboxed-install-byte-compiled unboxed-finalize-install-byte-compiled
+		   unboxed-remove-byte-compiled unboxed-finalize-remove-byte-compiled)
+    (native-compiled site native-comp-eln-load-path
+		     unboxed-native-compiled-p unboxed-site-native-compiled-directory
+		     unboxed-install-native-compiled unboxed-finalize-install-native-compiled
+		     unboxed-remove-native-compiled unboxed-finalize-remove-native-compiled)
+    (module site load-path
+	    unboxed-module-p unboxed-site-library-directory
+	    unboxed-install-module unboxed-finalize-install-module
+	    unboxed-remove-module unboxed-finalize-remove-module)
+    (info site Info-directory-list
+	  unboxed-info-p unboxed-site-info-directory
+	  unboxed-install-info unboxed-finalize-install-info
+	  unboxed-remove-info unboxed-finalize-remove-info)
+    (ignore site nil unboxed-compiled-elisp-p nil nil nil nil nil)
+    (data site nil
+	  unboxed-data-p unboxed-site-data-directory
+	  unboxed-install-data unboxed-finalize-install-data
+	  unboxed-remove-data unboxed-finalize-remove-data)))
+
+(defcustom unboxed-areas
+  `((user (unboxed-user-package-archive)
+	  unboxed-user-db-path
+	  ,unboxed-default-user-categories)
+    (site (unboxed-site-package-archive ,@package-directory-list)
+	  unboxed-site-db-path
+	  ,unboxed-default-site-categories))
+  "Areas for unboxing packages corresponding to source of the boxed
+packages.  Typically there are two areas for unboxing- site and user."
+  :type `(repeat :tag "Area Configuration" ,unboxed--area-config-customization-type)
+  :group 'unboxed)
 
 (defcustom unboxed-theme-libraries nil
   "List of elisp libraries for themes that are named `*-theme' but are
@@ -198,41 +292,6 @@ installation."
   :type '(choice (const :tag "Simple LISP object" sexpr))
   :group 'unboxed)
 
-(defconst unboxed--default-user-categories
-  `((theme unboxed-theme-p unboxed-user-theme-directory
-	   unboxed-install-theme unboxed-finalize-install-theme
-	   unboxed-remove-theme unboxed-finalize-remove-theme)
-    (library unboxed-library-p unboxed-user-library-directory
-	     unboxed-install-library unboxed-finalize-install-library
-	     unboxed-remove-library unboxed-finalize-remove-library)
-    (module unboxed-module-p unboxed-user-library-directory
-	    unboxed-install-module unboxed-finalize-install-module
-	    unboxed-remove-module unboxed-finalize-remove-module)
-    (info unboxed-info-p unboxed-user-info-directory
-	  unboxed-install-info unboxed-finalize-install-info
-	  unboxed-remove-info unboxed-finalize-remove-info)
-    (ignore unboxed-compiled-elisp-p nil nil nil nil nil)
-    (data unboxed-data-p unboxed-user-data-directory
-	  unboxed-install-data unboxed-finalize-install-data
-	  unboxed-remove-data unboxed-finalize-remove-data)))
-
-(defconst unboxed-default-site-categories
-  `((theme unboxed-theme-p unboxed-site-theme-directory
-	   unboxed-install-theme unboxed-finalize-install-theme
-	   unboxed-remove-theme unboxed-finalize-remove-theme)
-    (library unboxed-library-p unboxed-site-library-directory
-	     unboxed-install-library unboxed-finalize-install-library
-	     unboxed-remove-library unboxed-finalize-remove-library)
-    (module unboxed-module-p unboxed-site-library-directory
-	    unboxed-install-module unboxed-finalize-install-module
-	    unboxed-remove-module unboxed-finalize-remove-module)
-    (info unboxed-info-p unboxed-site-info-directory
-	  unboxed-install-info unboxed-finalize-install-info
-	  unboxed-remove-info unboxed-finalize-remove-info)
-    (ignore unboxed-compiled-elisp-p nil nil nil nil nil)
-    (data unboxed-data-p unboxed-site-data-directory
-	  unboxed-install-data unboxed-finalize-install-data
-	  unboxed-remove-data unboxed-finalize-remove-data)))
 
 (defcustom unboxed-data-directory-patterns
   '()

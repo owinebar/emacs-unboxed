@@ -25,10 +25,6 @@
 
 ;;; Code:
 
-(provide 'unboxed-file-management)
-
-;;; unboxed-file-managment.el ends here
-
 (defun unboxed--install-info-file-in-dir (installed-file)
   "Utility for creating entry for an unboxed package info file in the dir file
   for unboxed packages"
@@ -47,7 +43,7 @@
       (setq log-text (buffer-string)))
     (setf (unboxed-installed-file-log installed-file) log-text)))
 
-(defun unboxed--async-byte-compile-library (pd cats installed-file)
+(defun unboxed--async-byte-compile-library (cat area pd installed-file)
   "Function to byte compile an unboxed elisp library from a package.
 This function defines the following global symbols during compile, so
 a package may capture their value in an eval-when-compile form.
@@ -73,13 +69,13 @@ a package may capture their value in an eval-when-compile form.
 		  installed-file))
 	(src (unboxed-installed-file-package-source installed-file))
 	(lib (unboxed-installed-file-file installed-file))
-	(libdir (unboxed--file-category-location
+	(libdir (unboxed-file-category-location
 		 (cdr (assq 'library cats))))
-	(themedir (unboxed--file-category-location
+	(themedir (unboxed-file-category-location
 		 (cdr (assq 'theme cats))))
-	(infodir (unboxed--file-category-location
+	(infodir (unboxed-file-category-location
 		  (cdr (assq 'info cats))))
-	(datadir  (unboxed--file-category-location
+	(datadir  (unboxed-file-category-location
 		  (cdr (assq 'data cats))))
 	(elc-installed (unboxed-installed-file-struct-copy
 			installed-file))
@@ -129,12 +125,12 @@ a package may capture their value in an eval-when-compile form.
 ;;;  the location for installed files
 ;;; install-action returns a list of file names actually installed
 ;;; relative to the supplied location
-(defun unboxed--install-list (pd cat files install-action)
+(defun unboxed--install-list (area cat pd files install-action)
   (let ((ls files)
-	(cat-loc (unboxed--file-category-location cat))
-	(cname (unboxed--file-category-name cat))
-	(pkg (unboxed--package-desc-name pd))
-	(pkg-loc (unboxed--package-desc-dir pd))
+	(cat-loc (unboxed-file-category-location cat))
+	(cname (unboxed-file-category-name cat))
+	(pkg (unboxed-package-desc-name pd))
+	(pkg-loc (unboxed-package-desc-dir pd))
 	installed
 	file
 	installed-files
@@ -156,13 +152,13 @@ a package may capture their value in an eval-when-compile form.
 	      installed)))
     installed))
 
-(defun unboxed--install-simple-copy (pkg cat file src-loc dst-loc)
+(defun unboxed--install-simple-copy (area pkg cat file src-loc dst-loc)
   (let ((dest (file-name-concat dst-loc (file-name-non-directory file)))
 	(src (file-name-concat src-loc file)))
     (copy-file src dest t)
     `(,dest)))
 
-(defun unboxed--install-pkg-relative-copy (pkg cat file src-loc dst-loc)
+(defun unboxed--install-pkg-relative-copy (area pkg cat file src-loc dst-loc)
   (let ((dest (file-name-concat dst-loc pkg file))
 	(src (file-name-concat src-loc file)))
     (when (> (length (file-name-nondirectory file)) 0)
@@ -173,7 +169,7 @@ a package may capture their value in an eval-when-compile form.
 
 ;;; "files" here are installed-file structs
 ;;; remove-action takes the same arguments as an install-cation
-(defun unboxed--remove-list (areas files remove-action)
+(defun unboxed--remove-list (area files remove-action)
   (let ((ls files)
 	cat
 	cat-loc
@@ -184,23 +180,23 @@ a package may capture their value in an eval-when-compile form.
 	removed-file)
     (while ls
       (setq installed-file (pop ls))
-      (setq pkg (unboxed--installed-file-package installed-file))
+      (setq pkg (unboxed-installed-file-package installed-file))
       (setq pd (assoc pkg pkgs))
       (setq pd (and pd (cdr pd)))
       (unless pd
 	(signal 'unboxed-invalid-package `(,pkg ,pkgs)))
-      (setq pkg-loc (unboxed--package-desc-dir pd))
+      (setq pkg-loc (unboxed-package-desc-dir pd))
       (setq cname (unboxed-installed-file-category cat))
       (setq cat (assoc cname cats))
       (setq cat (and cat (cdr cat)))
       (unless cat
 	(signal 'unboxed-invalid-category `(,cname ,cats)))
-      (setq cat-loc (unboxed--file-category-location cat))
+      (setq cat-loc (unboxed-file-category-location cat))
       (setq removed-file
 	    (funcall remove-action
 		     pkg
 		     cname
-		     (unboxed--installed-file-file installed-file)
+		     (unboxed-installed-file-file installed-file)
 		     pkg-loc
 		     cat-loc))
       (setq deleted `(,@removed-file ,@deleted)))
@@ -221,38 +217,41 @@ a package may capture their value in an eval-when-compile form.
 ;;; These installers are used for lists of files of a particular
 ;;; category for a specific package
 ;;; file names are given as relative paths to the package directory
-(defun unboxed-install-theme (pd cat files)
-  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+(defun unboxed-install-theme (area pd files)
+  (unboxed--install-list 'theme area pd #'unboxed--install-simple-copy))
   
-(defun unboxed-install-library (pd cat files)
-  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+(defun unboxed-install-library (area pd files)
+  (unboxed--install-list 'library area pd #'unboxed--install-simple-copy))
 
-(defun unboxed-install-module (pd cat files)
-  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
-(defun unboxed-install-info (pd cat files)
-  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
-(defun unboxed-install-data (pd cat files)
-  (let ((loc (unboxed--file-category-location cat))
-	(pkg (unboxed--package-desc-name pd)))
+(defun unboxed-install-module (area pd files)
+  (unboxed--install-list 'module area pd #'unboxed--install-simple-copy))
+(defun unboxed-install-info (area pd files)
+  (unboxed--install-list 'info area pd files #'unboxed--install-simple-copy))
+(defun unboxed-install-data (area pd files)
+  (let ((loc (unboxed-file-category-location
+	      (cdr (assoc 'data
+			  (unboxed--area-categories area)))))
+	(pkg (unboxed-package-desc-name pd)))
     (make-directory (file-name-concat loc pkg) t))
-  (unboxed--install-list pd cat files #'unboxed--install-pkg-relative-copy))
-(defun unboxed-install-theme (pd cat files)
-  (unboxed--install-list pd cat files #'unboxed--install-simple-copy))
+  (unboxed--install-list 'data area files #'unboxed--install-pkg-relative-copy))
+
+(defun unboxed-install-theme (area pd files)
+  (unboxed--install-list area pd files #'unboxed--install-simple-copy))
 
 ;;; These removers are used for lists of installed files
-(defun unboxed-remove-theme (pkgs cats files)
-  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-theme (area files)
+  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
   
-(defun unboxed-remove-library (pkgs cats files)
-  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-library (area files)
+  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
 
-(defun unboxed-remove-module (pkgs cats files)
-  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-module (area files)
+  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
 
-(defun unboxed-remove-info (pkgs cats files)
-  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
-(defun unboxed-remove-data (pkgs cats files)
-  (unboxed--remove-list pkgs cats files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-info (area files)
+  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-data (area files)
+  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
 
 
 
@@ -301,6 +300,11 @@ a package may capture their value in an eval-when-compile form.
   "Utility function to run the first-stage unboxing of each file in a
 package that belongs to some category for its area"
   (let ((d (package-desc-dir pd))
-	(cats (unboxed--area-categories area))
+	(cats (unboxed--area-categories area)))))
+
 	
+(provide 'unboxed-file-management)
+
+;;; unboxed-file-managment.el ends here
+
 ;; 

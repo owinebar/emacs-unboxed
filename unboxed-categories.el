@@ -93,30 +93,48 @@ in the unboxed data directory for the package,
 to be executed last and just returns true."
   t)
 
-(defun unboxed--categories-setting->struct (cat pred-name dir-var
-						install-name
-						finalize-install-name
-						remove-name
-						finalize-remove-name)
-  (let ((pred (and (fboundp pred-name) (symbol-function pred-name)))
-	(dir (and (boundp dir-var) (symbol-value dir-var)))
-	(install (and (fboundp install-name) (symbol-function install-name)))
-	(finalize-install (and (fboundp finalize-install-name)
-						(symbol-function
-						finalize-install-name)))
-	(remove (and (fboundp remove-name) (symbol-function remove-name)))
-	(finalize-remove (and (fboundp finalize-remove-name)
-			      (symbol-function finalize-remove-name))))
+(defun unboxed--function-or-nil (val)
+  (cond
+   ((symbolp val)
+    (and (fboundp val) (symbol-function val)))
+   (t val)))
+
+(defun unboxed--string-or-nil (val)
+  (cond
+   ((symbolp val)
+    (and (boundp val) (symbol-value val)))
+   (t val)))
+
+(defun unboxed--categories-setting->struct (cat
+					    area
+					    path-var
+					    pred-name
+					    dir-var
+					    install-name
+					    finalize-install-name
+					    remove-name
+					    finalize-remove-name)
+  (let ((pred (unboxed--function-or-nil pred-name))
+	(dir (unboxed--string-or-nil dir-var))
+	(install (unboxed--function-or-nil install-name))
+	(finalize-install (unboxed--function-or-nil finalize-install-name))
+	(remove (unboxed--function-or-nil remove-name))
+	(finalize-remove (unboxed--function-or-nil finalize-remove-name)))
     (unless (and pred dir install)
       (signal 'unboxed-invalid-category-spec
-	      `(,cat (,pred-name ,pred)
-		     (,dir-var ,dir)
-		     (,install-name ,install)
-		     (,finalize-install-name ,finalize-install)
-		     (,remove-name ,remove)
-		     (,finalize-remove-name ,finalize-remove))))
-    (unboxed--file-category-create
+	      `(,cat
+		,area
+		,path-var
+		(,pred-name ,pred)
+		(,dir-var ,dir)
+		(,install-name ,install)
+		(,finalize-install-name ,finalize-install)
+		(,remove-name ,remove)
+		(,finalize-remove-name ,finalize-remove))))
+    (unboxed-file-category-create
      :name cat
+     :area area
+     :path-variable path-var
      :predicate pred
      :location dir
      :install-files install
