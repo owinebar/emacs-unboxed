@@ -50,22 +50,21 @@
 			     (setf (seq-elt s idx) elt)))
 			 pd)))))
 
-(defun unboxed--make-initial-area (name boxes db-path cats)
-  `(,(unboxed--area-config-create
-      :name name
-      :boxes boxes
-      :db-path db-path)
-    ,@(mapcar (lambda (args)
-		(apply #'unboxed--categories-setting->struct args))
-	      cats)))
+(defun unboxed--make-proto-area-from-setting (name boxes db-path cats)
+  (unboxed--make-proto-area
+   name boxes db-path
+   ,(mapcar (lambda (args)
+	      (let ((cat (apply #'unboxed--categories-setting->struct args)))
+		`(,(unboxed--file-category-name cat) . ,cat)))
+	    cats)))
 
-;; dummy-areas are area-configs with db component set to nil
-(defun unboxed--create-sexpr-db (area-name dummy-areas cats)
+
+(defun unboxed--create-sexpr-db (area-name proto-areas cats)
   "Create an unboxed db in the sexpr format - initialize from package-desc
 table assuming no packages have been unboxed"
-  (let (dummy-area area-configs box-paths pkgs inst)
-    (setq dummy-area (cdr (assq area-name dummy-areas)))
-    (setq box-paths (unboxed--area-config-boxes dummy-area))
+  (let (proto-area area-configs box-paths pkgs inst)
+    (setq proto-area (cdr (assq area-name proto-areas)))
+    (setq box-paths (unboxed--area-config-boxes proto-area))
     (setq pkgs (make-hash-table :test #'eq))
     (mapc (lambda (pd)
 	    (let ((upd (unboxed--init-package-desc 'package pd)))
@@ -81,27 +80,50 @@ table assuming no packages have been unboxed"
     (setq inst (make-hash-table :test #'equal))
     (unboxed--sexpr-db-create
      :layouts unboxed--struct-layouts
-     :areas dummy-areas
+     :areas proto-areas
      :categories cats
      :packages pkgs
      :installed inst)))
 
-(defun unboxed--make-areas (area-settings)
-  (let ((dummy-areas (mapcar #'unboxed--make-initial-area))
+(defun unboxed--make-area (area-name proto-areas)
+  (let ((proto-area (cdr (assq area-name proto-areas)))
+	categories area)
+    (setq categories (unboxed--proto-area-categories proto-area))
+    (setq db (unboxed--create-sexpr-db area-name proto-areas categories))
+    (setq area
+	  (unboxed--area-config-create
+	   :name (unboxed--proto-area-name proto-area)
+	   :boxes (unboxed--proto-area-boxes proto-area)
+	   :db-path (unboxed--proto-area-db-path proto-area)
+	   :db db))
+    area))
+
+(defun unboxed--make-areas-from-settings (area-settings)
+  "Initialize unboxing areas from the value of a customization variable"
+  (let ((proto-areas
+	 (mapcar (lambda (area-setting)
+		   (let ((pa (apply #'unboxed--make-proto-area-from-settings area-setting)))
+		     `(,(unboxed--proto-area-name pa) . ,pa)))
+		 area-settings))
 	arg-pairs areas)
-    (setq arg-pairs (mapcar (lambda (pr)
-			      (cons (unboxed--area-config-name (car pr))
-				    (cdr pr)))
-			    dummy-areas))
-    (setq dummy-areas (mapcar #'car dummy-areas))
     (setq areas
-	  (cl-mapcar (lambda (pr)
-		       (unboxed--create-sexpr-db (car pr)
-						 dummy-areas
-						 (cdr pr)))
-		     arg-pairs))
+	  (cl-mapcar (lambda (pa)
+		       (unboxed--make-area
+			(unboxed--proto-area-name pa)
+			proto-areas))
+		     proto-areas))
     areas))
-		       
+
+(defun unboxed--load-database (area-name areas)
+  "Load the database associated with area-name in areas"
+  (let ((area (cdr (assq area-name areas)))
+	db-path db)
+    
+  )
+(defun unboxed--save-database (area-name areas)
+  "Save the database associated with area-name in areas"
+  )
+
 
 (provide 'unboxed-database)
 

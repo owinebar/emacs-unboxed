@@ -25,6 +25,21 @@
 
 ;;; Code:
 
+(cl-defstruct (unboxed--proto-area
+	       (:constructor unboxed--proto-area-create)
+	       (:copier unboxed--proto-area-copy))
+  "Structure recording the parameters for an unboxed area, e.g. for user
+or site packages
+  Slots:
+  `name' Name of the package area, e.g. user or site
+  `boxes' Directories containing the boxed packages
+  `db-path' Path to the db file
+  `categories' Assoc list of file-categories."
+  name
+  boxes
+  db-path
+  categories)
+
 (cl-defstruct (unboxed--area-config
 	       (:constructor unboxed--area-config-create)
 	       (:copier unboxed--area-config-copy))
@@ -50,18 +65,21 @@ or site packages
   "Structure holding the tables of data for unboxed in sexpr db representation
    Slots:
    `layouts' Association list of data structure layouts used in this db
-   `areas' Association list of area-config structs with db entries set to nil
-   `categories' Assoc list of file-category descriptors keyed by category name
+   `areas' Association list of proto-area structs 
+   `area' proto-area this database corresponds to
    `packages' Assoc list of unboxed-package-descs for unboxed packages in this
               area.
    `installed' Assoc list of unboxed-installed-file structs for each file
               unboxed in the area."
   layouts
   areas
-  categories
+  area
   packages
   installed)
 
+(defun unboxed--sexpr-db-categories (db)
+  (unboxed--proto-area-categories
+   (unboxed--sexpr-db-area db)))
 
 (cl-defstruct (unboxed-file-category
                (:constructor unboxed-file-category-create)
@@ -197,12 +215,21 @@ installation manager
 (defvar unboxed--struct-layouts
   (mapcar (lambda (name) `(,name . ,(unboxed-make-struct-layout name)))
 	  '(unboxed--struct-layout
+	    unboxed--proto-area
 	    unboxed--area-config
 	    unboxed--sexpr-db
 	    unboxed-file-category
 	    unboxed-package-desc
 	    unboxed-installed-file))
   "Association list of layout descriptors of the structs used in unboxed database files.")
+
+(defun unboxed--make-proto-area (name boxes db-path cats)
+  (unboxed--proto-area-create
+      :name name
+      :boxes boxes
+      :db-path db-path
+      :categories cats))
+
 	    
 (define-error 'unboxed-invalid-package
   "Unrecognized package name")
