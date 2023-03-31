@@ -50,21 +50,36 @@
 			     (setf (seq-elt s idx) elt)))
 			 pd)))))
 
-(defun unboxed--make-proto-area-from-setting (name boxes db-path cats)
-  (unboxed--make-proto-area
+(defun unboxed--make-area-from-setting (name boxes db-path cats)
+  (unboxed--make-area
    name boxes db-path
    ,(mapcar (lambda (args)
 	      (let ((cat (apply #'unboxed--categories-setting->struct args)))
 		`(,(unboxed--file-category-name cat) . ,cat)))
 	    cats)))
 
+(defun unboxed--scoped-areas (area-name areas)
+  "Return tail of areas alist with first association key eq to area-name"
+  (let (pr)
+    (while (and (null pr) areas)
+      (setq pr (pop areas))
+      (unless (eq (car pr) area-name)
+	(setq pr nil)))
+    (when pr
+      (push pr areas)))
+  areas)
 
-(defun unboxed--create-sexpr-db (area-name proto-areas cats)
+    
+(defun unboxed--create-sexpr-db (area-name areas)
   "Create an unboxed db in the sexpr format - initialize from package-desc
 table assuming no packages have been unboxed"
-  (let (proto-area area-configs box-paths pkgs inst)
-    (setq proto-area (cdr (assq area-name proto-areas)))
-    (setq box-paths (unboxed--area-config-boxes proto-area))
+  (let (area box-paths pkgs inst)
+    ;; Only record areas in scope
+    ;; E.G. site package database should not contain references to user database file
+    ;;     of site administrators
+    (setq areas (unboxed--scoped-areas area-name areas))
+    (setq area (cdar areas))
+    (setq box-paths (unboxed--area-boxes area))
     (setq pkgs (make-hash-table :test #'eq))
     (mapc (lambda (pd)
 	    (let ((upd (unboxed--init-package-desc 'package pd)))
@@ -80,15 +95,14 @@ table assuming no packages have been unboxed"
     (setq inst (make-hash-table :test #'equal))
     (unboxed--sexpr-db-create
      :layouts unboxed--struct-layouts
-     :areas proto-areas
-     :categories cats
+     :areas areas
      :packages pkgs
      :installed inst)))
 
-(defun unboxed--make-area (area-name proto-areas)
-  (let ((proto-area (cdr (assq area-name proto-areas)))
+(defun unboxed--make-db (area-name areas)
+  (let ((area (cdr (assq area-name areas)))
 	categories area)
-    (setq categories (unboxed--proto-area-categories proto-area))
+    (setq categories (unboxed--area-categories area))
     (setq db (unboxed--create-sexpr-db area-name proto-areas categories))
     (setq area
 	  (unboxed--area-config-create
@@ -98,7 +112,7 @@ table assuming no packages have been unboxed"
 	   :db db))
     area))
 
-(defun unboxed--make-areas-from-settings (area-settings)
+(defun unboxed--make-dbs-from-settings (area-settings)
   "Initialize unboxing areas from the value of a customization variable"
   (let ((proto-areas
 	 (mapcar (lambda (area-setting)

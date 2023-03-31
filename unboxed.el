@@ -46,15 +46,34 @@
 (require 'unboxed-rewrite-sexprs)
 (require 'unboxed-database)
 
+(defvar unboxed--dbs nil)
 
-(defun unboxed-initial-setup ()
+(defun unboxed-setup ()
   "Initialize unboxed package management system"
   )
+;; The activate and deactivate functions only manipulate whether the unboxed system is
+;; running.  They do not install or remove files from unboxed
+;; management locations.  They only change which management system is
+;; responsible for loading such packages.
 (defun unboxed-activate ()
   "Activate unboxed package management"
   )
 (defun unboxed-deactivate ()
   "Deactivate unboxed package management"
+  )
+
+;; unbox and rebox functions handle installing and removing files
+;; associated with particular packages from the unboxing locations
+(defun unboxed-unbox-package-list (area ls)
+  "Put the listed packages into the specified unboxing area"
+  )
+(defun unboxed-unbox-packages (area pred)
+  "Put boxed packages belonging to specified area satisfying pred
+under management of unboxed system"
+  )
+
+(defun unboxed-rebox-package-list (area ls)
+  "Remove the listed packages from the specified unboxing area"
   )
 
 (defun unboxed-unbox-packages (ls)

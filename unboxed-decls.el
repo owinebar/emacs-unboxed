@@ -25,7 +25,7 @@
 
 ;;; Code:
 
-(cl-defstruct (unboxed--proto-area
+(cl-defstruct (unboxed--area
 	       (:constructor unboxed--proto-area-create)
 	       (:copier unboxed--proto-area-copy))
   "Structure recording the parameters for an unboxed area, e.g. for user
@@ -40,21 +40,6 @@ or site packages
   db-path
   categories)
 
-(cl-defstruct (unboxed--area-config
-	       (:constructor unboxed--area-config-create)
-	       (:copier unboxed--area-config-copy))
-  "Structure recording the parameters for an unboxed area, e.g. for user
-or site packages
-  Slots:
-  `name' Name of the package area, e.g. user or site
-  `boxes' Directories containing the boxed packages
-  `db-path' Path to the db file
-  `db' The database structure for the area."
-  name
-  boxes
-  db-path
-  db)
-
 ;; note - it's entirely possible for a site to have one version of unboxed installed
 ;; and for a user to have another version installed.  Therefore, we record
 ;; the layout of structures in structure itself to allow some forward/backward
@@ -65,8 +50,8 @@ or site packages
   "Structure holding the tables of data for unboxed in sexpr db representation
    Slots:
    `layouts' Association list of data structure layouts used in this db
-   `areas' Association list of proto-area structs 
-   `area' proto-area this database corresponds to
+   `areas' Association list of area structs in scope for dependency calculations
+   `area' area struct for this database
    `packages' Assoc list of unboxed-package-descs for unboxed packages in this
               area.
    `installed' Assoc list of unboxed-installed-file structs for each file
@@ -77,8 +62,20 @@ or site packages
   packages
   installed)
 
+(defun unboxed--sexpr-db-name (db)
+  (unboxed--area-name
+   (unboxed--sexpr-db-area db)))
+
+(defun unboxed--sexpr-db-boxes (db)
+  (unboxed--area-boxes
+   (unboxed--sexpr-db-area db)))
+
+(defun unboxed--sexpr-db-path (db)
+  (unboxed--area-db-path
+   (unboxed--sexpr-db-area db)))
+
 (defun unboxed--sexpr-db-categories (db)
-  (unboxed--proto-area-categories
+  (unboxed--area-categories
    (unboxed--sexpr-db-area db)))
 
 (cl-defstruct (unboxed-file-category
@@ -223,8 +220,8 @@ installation manager
 	    unboxed-installed-file))
   "Association list of layout descriptors of the structs used in unboxed database files.")
 
-(defun unboxed--make-proto-area (name boxes db-path cats)
-  (unboxed--proto-area-create
+(defun unboxed--make-area (name boxes db-path cats)
+  (unboxed--area-create
       :name name
       :boxes boxes
       :db-path db-path
