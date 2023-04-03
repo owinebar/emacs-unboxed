@@ -243,10 +243,18 @@ packages will be installed."
   `((user (unboxed-user-package-archive)
 	  unboxed-user-db-path
 	  unboxed-user-area-pred
+	  unboxed-user-excluded-packages
+	  unboxed-user-theme-libraries
+	  unboxed-user-data-directory-patterns
+	  unboxed-user-package-patches
 	  ,unboxed-default-user-categories)
     (site (unboxed-site-package-archive ,@package-directory-list)
 	  unboxed-site-db-path
 	  unboxed-site-area-pred
+	  unboxed-site-excluded-packages
+	  unboxed-site-theme-libraries
+	  unboxed-site-data-directory-patterns
+	  unboxed-site-package-patches
 	  ,unboxed-default-site-categories))
   "Areas for unboxing packages corresponding to source of the boxed
 packages.  Typically there are two areas for unboxing- site and user."
@@ -289,14 +297,6 @@ rather than in a theme directory."
 		  (string :tag "Regular Expression")))
   :group 'unboxed-site)
 
-(defcustom unboxed-package-data-directory-variables nil
-  "Association list of packages mapped to the  file and variable names
-that should be hard-coded to the data directory of the unboxed
-  package.  There may be multiple associations for a given package" 
-  :type '(repeat (list (symbol :tag "package")
-		       (file :tag "library name")
-		       (symbol :tag "data directory variable")))
-  :group 'unboxed)
 
 (defcustom unboxed-user-package-patches nil
   "Association list of packages mapped to a patch file making any

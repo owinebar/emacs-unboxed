@@ -37,6 +37,7 @@ or site packages
   `pred' Predicate to determine whether to a package in this area should
          be unboxed
   `excluded' Packages that are never unboxed in this area
+  `excluded-regex' Regular expression derived from excluded
   `theme-libraries' ELisp libraries ending in `-theme' in this area
   `datadir-pats' Data directory pcase patterns for rewriting
   `patches' Package-specific patches in this area
@@ -207,6 +208,10 @@ installation manager
 		 (variable :tag "Variable")
 		 (file "Filename"))
 	 (choice :tag "Predicate" symbol function nil)
+	 (choice :tag "Excluded" symbol nil)
+	 (choice :tag "Theme Libs" symbol nil)
+	 (choice :tag "Data Directory patterns" symbol nil)
+	 (choice :tag "Patches" symbol nil)
 	 ,unboxed--sexpr-db-customization-type))
 
 (defun unboxed--make-keyword (fld)
@@ -233,33 +238,62 @@ installation manager
 	    unboxed-installed-file))
   "Association list of layout descriptors of the structs used in unboxed database files.")
 
-(defun unboxed--resolve-boxed-val (v)
+(defun unboxed--resolve-conf-list (v)
   (cond
-   ((listp v) (mapcan #'unboxed--resolve-boxed-val v))
+   ((listp v) (mapcan #'unboxed--resolve-conf-list v))
    ((stringp v)   (list v))
    ((boundp v)
     (let ((val (symbol-value v)))
       (if (listp val)
-	  (mapcan #'unboxed--resolve-boxed-val val)
-	(unboxed--resolve-boxed-val val))))
+	  (mapcan #'unboxed--resolve-conf-list val)
+	(unboxed--resolve-conf-list val))))
    (t nil)))
-  
-(defun unboxed--make-area (name boxes-conf db-path-conf pred-conf cats)
-  (let ((boxes
-	 (cond
-	  ((symbolp boxes)
-	   (unboxed--resolve-boxed-var boxes))
-	  (t
-	   (let ((ls (mapcar
-		     
-  (unboxed--area-create
-      :name name
-      :boxes boxes
-      :db-path db-path
-      :pred pred
-      :categories cats))
 
-	    
+(defun unboxed--resolve-conf-val (v)
+  (cond
+   ((stringp v)   v)
+   ((boundp v) (symbol-value v))
+   (t nil)))
+
+(defun unboxed--resolve-conf-func (v)
+  (cond
+   ((not (symbolp v))
+    (and (functionp v) v))
+   ((fboundp v) (symbol-function v))
+   ((boundp v) (symbol-value v))
+   (t nil)))
+
+(defun unboxed--make-area (name
+			   boxes-conf
+			   db-path-conf
+			   pred-conf
+			   excluded-conf
+			   theme-libs-conf
+			   datadir-conf
+			   patches-conf
+			   cats)
+  (let ((boxes (unboxed--resolve-conf-list boxes-conf))
+	(db (unboxed--resolve-conf-val db-path-conf))
+	(pred (unboxed--resolve-conf-func pred-conf))
+	(excluded (unboxed--resolve-conf-val excluded-conf))
+	(theme-libs (unboxed--resolve-conf-val theme-libs-conf))
+	(datadir (unboxed--resolve-conf-val datadir-conf))
+	(patches (unboxed--resolve-conf-val patches-conf))
+	excluded-regex)
+    (unboxed--area-create
+     :name name
+     :boxes boxes
+     :db-path db-path
+     :pred pred
+     :excluded excluded
+     :excluded-regex (unboxed--excluded-package-regex excluded)
+     :theme-libraries theme-libs
+     :datadir-pats datadir
+     :patches patches
+     :categories cats)))
+
+
+
 (define-error 'unboxed-invalid-package
   "Unrecognized package name")
 (define-error 'unboxed-invalid-category
