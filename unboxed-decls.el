@@ -34,10 +34,22 @@ or site packages
   `name' Name of the package area, e.g. user or site
   `boxes' Directories containing the boxed packages
   `db-path' Path to the db file
+  `pred' Predicate to determine whether to a package in this area should
+         be unboxed
+  `excluded' Packages that are never unboxed in this area
+  `theme-libraries' ELisp libraries ending in `-theme' in this area
+  `datadir-pats' Data directory pcase patterns for rewriting
+  `patches' Package-specific patches in this area
   `categories' Assoc list of file-categories."
   name
   boxes
   db-path
+  pred
+  excluded
+  excluded-regex
+  theme-libraries
+  datadir-pats
+  patches
   categories)
 
 ;; note - it's entirely possible for a site to have one version of unboxed installed
@@ -183,7 +195,7 @@ installation manager
 (defconst unboxed--sexpr-db-customization-type
   `(list (repeat :tag "File Categories" ,unboxed--file-category-customization-type)))
 
-(defconst unboxed--area-config-customization-type
+(defconst unboxed--area-customization-type
   `(list (symbol :tag "Area Name")
 	 (choice :tag "Box Directories"
 		 (symbol :tag "Variable")
@@ -194,6 +206,7 @@ installation manager
 	 (choice :tag "Path to DB"
 		 (variable :tag "Variable")
 		 (file "Filename"))
+	 (choice :tag "Predicate" symbol function nil)
 	 ,unboxed--sexpr-db-customization-type))
 
 (defun unboxed--make-keyword (fld)
@@ -220,11 +233,30 @@ installation manager
 	    unboxed-installed-file))
   "Association list of layout descriptors of the structs used in unboxed database files.")
 
-(defun unboxed--make-area (name boxes db-path cats)
+(defun unboxed--resolve-boxed-val (v)
+  (cond
+   ((listp v) (mapcan #'unboxed--resolve-boxed-val v))
+   ((stringp v)   (list v))
+   ((boundp v)
+    (let ((val (symbol-value v)))
+      (if (listp val)
+	  (mapcan #'unboxed--resolve-boxed-val val)
+	(unboxed--resolve-boxed-val val))))
+   (t nil)))
+  
+(defun unboxed--make-area (name boxes-conf db-path-conf pred-conf cats)
+  (let ((boxes
+	 (cond
+	  ((symbolp boxes)
+	   (unboxed--resolve-boxed-var boxes))
+	  (t
+	   (let ((ls (mapcar
+		     
   (unboxed--area-create
       :name name
       :boxes boxes
       :db-path db-path
+      :pred pred
       :categories cats))
 
 	    

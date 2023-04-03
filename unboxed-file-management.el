@@ -25,6 +25,7 @@
 
 ;;; Code:
 
+
 (defun unboxed--install-info-file-in-dir (installed-file)
   "Utility for creating entry for an unboxed package info file in the dir file
   for unboxed packages"

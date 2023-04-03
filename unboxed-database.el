@@ -50,13 +50,23 @@
 			     (setf (seq-elt s idx) elt)))
 			 pd)))))
 
-(defun unboxed--make-area-from-setting (name boxes db-path cats)
-  (unboxed--make-area
-   name boxes db-path
-   ,(mapcar (lambda (args)
-	      (let ((cat (apply #'unboxed--categories-setting->struct args)))
-		`(,(unboxed--file-category-name cat) . ,cat)))
-	    cats)))
+(defun unboxed--area-settings->struct (name boxes db-path cat-settings)
+  (let ((cats
+	 (mapcar (lambda (args)
+		   (let ((cat (apply #'unboxed--categories-setting->struct
+				     args)))
+		     `(,(unboxed--file-category-name cat) . ,cat)))
+		 cat-settings)))
+    (unboxed--make-area name boxes db-path cats)))
+
+(defun unboxeds--areas-from-settings (areas-settings)
+  (let ((areas
+	 (mapcar
+	  (lambda (area-settings)
+	    (let ((area (apply #'unboxed--area-settings->struct
+			       area-settings)))
+	      `(,(unboxed--area-name area) . ,area))))))
+    areas))
 
 (defun unboxed--scoped-areas (area-name areas)
   "Return tail of areas alist with first association key eq to area-name"
@@ -69,7 +79,71 @@
       (push pr areas)))
   areas)
 
-    
+
+(defun unboxed--package-single-p (pd)
+  (let ((d (package-desc-dir pd))
+	(name (symbol-name (package-desc-name pd)))
+	all main auto pkg r)
+    (when (and d (file-accessible-directory-p d))
+      (setq all (directory-files d nil "^[^.].*$")
+	    main (directory-files d nil (concat "^[^.]" (regexp-quote name) "\\.elc?$"))
+	    auto (directory-files d nil "^[^.].*-autoloads?\\.elc?$")
+	    pkg (directory-files d nil "^[^.].*-pkg\\.elc?$"))
+      (when (= (length all) (+ (length main) (length auto) (length pkg)))
+	(setq r t)))
+    r))
+
+
+(defun unboxed--package-simple-p (pd)
+  (let ((d (package-desc-dir pd))
+	(name (symbol-name (package-desc-name pd)))
+	(no-subdirs t)
+	all fn)
+    (setq all (directory-files d t "^[^.].*$"))
+    (while (and no-subdirs all)
+      (setq fn (pop all)
+	    no-subdirs (file-directory-p fn)))
+    no-subdirs))
+
+(defun unboxed--package-any-p (pd)
+  t)
+
+(defun unboxed--excluded-package-regex (ls)
+  (let (re-ls syms re e)
+    (while ls
+      (setq e (pop ls))
+      (cond
+       ((symbolp e)
+	(push (symbol-name e) syms))
+       (t (push e re-ls))))
+    (when syms
+      (setq e (concat "\\(" (regexp-opt syms) "\\)")))
+    (unless (and syms (null re-ls))
+      (setq re (pop re-ls))
+      (setq e (concat "\\(" re "\\)")))
+    (while re-ls
+      (setq re (pop re-ls))
+      (setq e (concat "\\(" re "\\)\\|" e)))
+    e))
+
+(defun unboxed--apply-package-pred (pred excluded-re pd)
+  (let (rv)
+    (unless (string-match-p excluded-re (unboxed--package-desc-name pd))
+      (setq rv (funcall pred pd)))
+    rv))
+
+(defun unboxed--packages-to-unbox (db)
+  (let ((area (unboxed--sexpr-db-area db))
+	(pkgs (unboxed--sexpr-db-packages db))
+	unboxed-pkgs pred excluded-re)
+    (setq pred (unboxed--area-pred area)
+	  excluded-re (unboxed--area-excluded-regex area))
+    (maphash (lambda (name pd)
+	       (when (unboxed--apply-package-pred pred excluded-re pd)
+		 (push pd unboxed-pkgs)))
+	     pkgs)
+    (reverse unboxed-pkgs)))
+
 (defun unboxed--create-sexpr-db (area-name areas)
   "Create an unboxed db in the sexpr format - initialize from package-desc
 table assuming no packages have been unboxed"
@@ -99,41 +173,25 @@ table assuming no packages have been unboxed"
      :packages pkgs
      :installed inst)))
 
-(defun unboxed--make-db (area-name areas)
-  (let ((area (cdr (assq area-name areas)))
-	categories area)
-    (setq categories (unboxed--area-categories area))
-    (setq db (unboxed--create-sexpr-db area-name proto-areas categories))
-    (setq area
-	  (unboxed--area-config-create
-	   :name (unboxed--proto-area-name proto-area)
-	   :boxes (unboxed--proto-area-boxes proto-area)
-	   :db-path (unboxed--proto-area-db-path proto-area)
-	   :db db))
-    area))
-
 (defun unboxed--make-dbs-from-settings (area-settings)
   "Initialize unboxing areas from the value of a customization variable"
-  (let ((proto-areas
-	 (mapcar (lambda (area-setting)
-		   (let ((pa (apply #'unboxed--make-proto-area-from-settings area-setting)))
-		     `(,(unboxed--proto-area-name pa) . ,pa)))
-		 area-settings))
-	arg-pairs areas)
-    (setq areas
-	  (cl-mapcar (lambda (pa)
-		       (unboxed--make-area
-			(unboxed--proto-area-name pa)
-			proto-areas))
-		     proto-areas))
-    areas))
+  (let ((areas (unboxed--areas-from-settings area-settings))
+	dbs)
+    (setq dbs
+	  (mapcar (lambda (area)
+		    (let ((name (unboxed--area-name area)))
+		      `(,name
+			.
+			,(unboxed--create-sexpr-db name areas))))))
+    dbs))
 
-(defun unboxed--load-database (area-name areas)
-  "Load the database associated with area-name in areas"
-  (let ((area (cdr (assq area-name areas)))
-	db-path db)
-    
-  )
+(defun unboxed--load-database (area)
+  "Load the database associated with area"
+  (let ((db-path (unboxed--area-db-path area))
+	db)
+    (when (
+    ))
+
 (defun unboxed--save-database (area-name areas)
   "Save the database associated with area-name in areas"
   )

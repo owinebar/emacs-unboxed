@@ -48,11 +48,19 @@
 will be stored" 
   :type 'directory
   :group 'unboxed-user)
+(defcustom unboxed-user-area-pred nil
+  "Predicate for determining whether a user package should be unboxed."
+  :type '(choice :tag "Predicate" function nil)
+  :group 'unboxed-user)
 (defcustom unboxed-site-db-path 
   (file-name-concate data-directory "unboxed-site-packages.sexpr")
   "Directory in which the database tracking installed system packages
 will be stored" 
   :type 'directory
+  :group 'unboxed-site)
+(defcustom unboxed-site-area-pred nil
+  "Predicate for determining whether a site package should be unboxed."
+  :type '(choice :tag "Predicate" function nil)
   :group 'unboxed-site)
 
 (defcustom unboxed-temp-directory
@@ -234,30 +242,52 @@ packages will be installed."
 (defcustom unboxed-areas
   `((user (unboxed-user-package-archive)
 	  unboxed-user-db-path
+	  unboxed-user-area-pred
 	  ,unboxed-default-user-categories)
     (site (unboxed-site-package-archive ,@package-directory-list)
 	  unboxed-site-db-path
+	  unboxed-site-area-pred
 	  ,unboxed-default-site-categories))
   "Areas for unboxing packages corresponding to source of the boxed
 packages.  Typically there are two areas for unboxing- site and user."
   :type `(repeat :tag "Area Configuration" ,unboxed--area-config-customization-type)
   :group 'unboxed)
 
-(defcustom unboxed-theme-libraries nil
+(defcustom unboxed-user-theme-libraries nil
   "List of elisp libraries for themes that are named `*-theme' but are
 not themes themselves. These are required to be on the load-path
 rather than in a theme directory." 
   :type '(repeat symbol)
   :group 'unboxed)
 
-(defcustom unboxed-excluded-packages nil
-  "List of packages that should never be managed by unbox regardless
+(defcustom unboxed-site-theme-libraries nil
+  "List of elisp libraries for themes that are named `*-theme' but are
+not themes themselves. These are required to be on the load-path
+rather than in a theme directory." 
+  :type '(repeat symbol)
+  :group 'unboxed)
+
+(defcustom unboxed-user-excluded-packages nil
+  "List of user packages that should never be managed by unbox regardless
   of the result of the predicate. Useful for packages that fail when
   unboxed for some reason, or for packages which the user wishes to
   maintain in traditional form, e.g. for active development of a
   package directory that is a git repo." 
-  :type '(repeat symbol)
-  :group 'unboxed)
+  :type '(repeat
+	  (choice (symbol :tag "Package Name")
+		  (string :tag "Regular Expression")))
+  :group 'unboxed-user)
+
+(defcustom unboxed-site-excluded-packages nil
+  "List of site packages that should never be managed by unbox regardless
+  of the result of the predicate. Useful for packages that fail when
+  unboxed for some reason, or for packages which the user wishes to
+  maintain in traditional form, e.g. for active development of a
+  package directory that is a git repo." 
+  :type '(repeat
+	  (choice (symbol :tag "Package Name")
+		  (string :tag "Regular Expression")))
+  :group 'unboxed-site)
 
 (defcustom unboxed-package-data-directory-variables nil
   "Association list of packages mapped to the  file and variable names
@@ -268,7 +298,17 @@ that should be hard-coded to the data directory of the unboxed
 		       (symbol :tag "data directory variable")))
   :group 'unboxed)
 
-(defcustom unboxed-package-patches nil
+(defcustom unboxed-user-package-patches nil
+  "Association list of packages mapped to a patch file making any
+updates required to the package to make it compatible with unboxed
+installation."  
+  :type '(repeat (list (symbol :tag "package")
+		       (file :tag "patch file")
+		       (choice (const :tag "Default patch level 0" 0)
+			       (list (integer :tag "patch level")))))
+  :group 'unboxed-user)
+
+(defcustom unboxed-site-package-patches nil
   "Association list of packages mapped to a patch file making any
 updates required to the package to make it compatible with unboxed
 installation."  
@@ -276,7 +316,7 @@ installation."
 		       (file :tag "patch file")
 		       (choice (const nil :tag "Default patch level 0")
 			       (list (integer :tag "patch level")))))
-  :group 'unboxed)
+  :group 'unboxed-site)
 
 
 (defcustom unboxed-install-info-program "install-info"
@@ -293,13 +333,25 @@ installation."
   :group 'unboxed)
 
 
-(defcustom unboxed-data-directory-patterns
-  '()
-  "A list of pcase patterns that match against known expressions used to compute a packages installation directory
-at either compile or load time.  Any matches will be hard-coded to be the value
-of the unboxed package's data directory as a string."
+(defcustom unboxed-user-data-directory-patterns
+  nil
+  "A list of pcase patterns that match against known expressions used to
+compute a packages installation directory at either compile or load time.
+Any matches will be hard-coded to be the value of the unboxed package's
+data directory as a string."
   :type '(repeat (sexpr :tag "pcase pattern"))
-  :group unboxed
+  :group unboxed-user
+  :setter #'unboxed--set-pcase-replace-sexpr-p
+  )
+
+(defcustom unboxed-site-data-directory-patterns
+  nil
+  "A list of pcase patterns that match against known expressions used to
+compute a packages installation directory at either compile or load time.
+Any matches will be hard-coded to be the value of the unboxed package's
+data directory as a string."
+  :type '(repeat (sexpr :tag "pcase pattern"))
+  :group unboxed-site
   :setter #'unboxed--set-pcase-replace-sexpr-p
   )
 
