@@ -297,12 +297,6 @@ a package may capture their value in an eval-when-compile form.
 (defun unboxed-finalize-remove-data (all-pkgs all-cats files)
   nil)
 
-(defun unboxed--install-package-files (area pd)
-  "Utility function to run the first-stage unboxing of each file in a
-package that belongs to some category for its area"
-  (let ((d (package-desc-dir pd))
-	(cats (unboxed--area-categories area)))))
-
 	
 (provide 'unboxed-file-management)
 

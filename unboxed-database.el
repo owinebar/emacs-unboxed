@@ -144,6 +144,69 @@
 	     pkgs)
     (reverse unboxed-pkgs)))
 
+(defun unboxed--unbox-package (db pd installed-by-cat)
+  (let ((area (unboxed--sexpr-db-area db))
+	(pkgs (unboxed--sexpr-db-packages db))
+	(installed (unboxed--sexpr-db-installed db))
+	(pkg-dir (file-name-as-directory (unboxed-package-desc-dir pd)))
+	cats ls install-files cat-pred cat-files noncat-files N
+	cat-name cat-installed-files-pair
+	cat-installed-files all-installed pr)
+    (setq cats (unboxed--area-categories area)
+	  ls cats
+	  N (length pkg-dir))
+    (setq files (mapcar (lambda (fn) (substring fn N))
+			(directory-files-recursively pkg-dir "")))
+    (while ls
+      (setq cat (pop ls)
+	    install-files (unboxed-file-category-install-files cat)
+	    cat-pred (unboxed-file-category-pred cat))
+      (mapc (lambda (fn)
+	      (if (funcall pred fn)
+		  (push fn cat-files)
+		(push fn noncat-files)))
+	    files)
+      (setq files (nreverse noncat-files)
+	    noncat-files nil
+	    all-installed (cons (install-files db pd cat-files)
+				 all-installed)
+	    cat-files nil))
+    (setq ls all-installed)
+    (while all-installed
+      (setq ls (pop all-installed))
+      (while ls
+	;; reuse the cons cells already allocated above
+	(setq pr ls
+	      ls (cdr ls)
+	      inst (car pr)
+	      cat (unboxed-installed-file-category inst)
+	      cat-installed-files-pair (assq cat installed-by-cat))
+	(setcdr pr (cdr cat-installed-files-pair))
+	(setcdr cat-installed-files-pair pr)))
+    installed-by-cat))
+
+(defun unbox--unbox-packages-in-db (db)
+  (let ((area (unboxed--sexpr-db-area db))
+	(pkgs (unboxed--sexpr-db-packages db))
+	(installed (unboxed--sexpr-db-installed db))
+	cats installed-by-cat pkgs-to-unbox ls pd)
+    (setq cats (unboxed--area-categories area)
+	  installed-by-cat (mapcar (lambda (c)
+				     `(,(unboxed-file-category-name c)))
+				   cats))
+    (setq pkgs-to-unbox (unboxed--packages-to-unbox db)
+	  ls pkgs-to-unbox)
+    (while ls
+      (setq pd (pop ls)
+	    installed-by-cat (unboxed--unbox-package db pd installed-by-cat)))
+    (setq ls cats)
+    (while ls
+      (setq cat (pop ls)
+	    finalize-install-files (unboxed-file-category-finalize-install-files cat)
+	    cat-installed-files (cdr (assq cat installed-by-cat))
+	    db (funcall finalize-install-files db cat-installed-files)))
+    db))
+
 (defun unboxed--create-sexpr-db (area-name areas)
   "Create an unboxed db in the sexpr format - initialize from package-desc
 table assuming no packages have been unboxed"
