@@ -41,6 +41,7 @@ or site packages
   `theme-libraries' ELisp libraries ending in `-theme' in this area
   `datadir-pats' Data directory pcase patterns for rewriting
   `patches' Package-specific patches in this area
+  `autoloads-file' Name of generated autoloads file for unboxed libraries
   `categories' Assoc list of file-categories."
   name
   boxes
@@ -51,6 +52,7 @@ or site packages
   theme-libraries
   datadir-pats
   patches
+  autoloads-file
   categories)
 
 ;; note - it's entirely possible for a site to have one version of unboxed installed
@@ -212,6 +214,7 @@ installation manager
 	 (choice :tag "Theme Libs" symbol nil)
 	 (choice :tag "Data Directory patterns" symbol nil)
 	 (choice :tag "Patches" symbol nil)
+	 (choice :tag "Autoloads Filename" symbol string nil)
 	 ,unboxed--sexpr-db-customization-type))
 
 (defun unboxed--make-keyword (fld)
@@ -271,6 +274,7 @@ installation manager
 			   theme-libs-conf
 			   datadir-conf
 			   patches-conf
+			   autoloads-conf
 			   cats)
   (let ((boxes (unboxed--resolve-conf-list boxes-conf))
 	(db (unboxed--resolve-conf-val db-path-conf))
@@ -279,6 +283,7 @@ installation manager
 	(theme-libs (unboxed--resolve-conf-val theme-libs-conf))
 	(datadir (unboxed--resolve-conf-val datadir-conf))
 	(patches (unboxed--resolve-conf-val patches-conf))
+	(autoloads-fn (unboxed--resolve-conf-val autoloads-conf))
 	excluded-regex)
     (unboxed--area-create
      :name name
@@ -290,6 +295,7 @@ installation manager
      :theme-libraries theme-libs
      :datadir-pats datadir
      :patches patches
+     :autoloads-file autoloads-fn
      :categories cats)))
 
 

@@ -247,6 +247,7 @@ packages will be installed."
 	  unboxed-user-theme-libraries
 	  unboxed-user-data-directory-patterns
 	  unboxed-user-package-patches
+	  unboxed-user-autoloads-file
 	  ,unboxed-default-user-categories)
     (site (unboxed-site-package-archive ,@package-directory-list)
 	  unboxed-site-db-path
@@ -255,6 +256,7 @@ packages will be installed."
 	  unboxed-site-theme-libraries
 	  unboxed-site-data-directory-patterns
 	  unboxed-site-package-patches
+	  unboxed-site-autoloads-file
 	  ,unboxed-default-site-categories))
   "Areas for unboxing packages corresponding to source of the boxed
 packages.  Typically there are two areas for unboxing- site and user."
@@ -266,14 +268,14 @@ packages.  Typically there are two areas for unboxing- site and user."
 not themes themselves. These are required to be on the load-path
 rather than in a theme directory." 
   :type '(repeat symbol)
-  :group 'unboxed)
+  :group 'unboxed-user)
 
 (defcustom unboxed-site-theme-libraries nil
   "List of elisp libraries for themes that are named `*-theme' but are
 not themes themselves. These are required to be on the load-path
 rather than in a theme directory." 
   :type '(repeat symbol)
-  :group 'unboxed)
+  :group 'unboxed-site)
 
 (defcustom unboxed-user-excluded-packages nil
   "List of user packages that should never be managed by unbox regardless
@@ -318,6 +320,17 @@ installation."
 			       (list (integer :tag "patch level")))))
   :group 'unboxed-site)
 
+(defcustom unboxed-user-autoloads-filename "unboxed-autoloads.el"
+  "Name of generated autoloads file in library directory for unboxed
+user packages."
+  :type 'string
+  :group 'unboxed-user)
+
+(defcustom unboxed-site-autoloads-filename "unboxed-autoloads.el"
+  "Name of generated autoloads file in library directory for unboxed
+site packages."
+  :type 'string
+  :group 'unboxed-site)
 
 (defcustom unboxed-install-info-program "install-info"
   "Path to install-info program"

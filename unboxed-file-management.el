@@ -44,6 +44,25 @@
       (setq log-text (buffer-string)))
     (setf (unboxed-installed-file-log installed-file) log-text)))
 
+(defun unboxed--remove-info-file-from-dir (installed-file)
+  "Utility for creating entry for an unboxed package info file in the dir file
+  for unboxed packages"
+  (let ((file (unboxed-installed-file-file installed-file))
+	(loc (unboxed-installed-file-category-location
+	      installed-file))
+	full-path info-dir info-file log-text)
+    (setq full-path (file-name-concat loc file))
+    (setq info-dir (file-name-directory full-path))
+    (setq info-file (file-name-nondirectory full-path))
+    (with-temp-buffer
+      (call-process unboxed-install-info-program nil t nil
+		    (shell-quote-argument
+		     (concat "--info-dir=" info-dir))
+		    "--remove"
+		    (shell-quote-argument file))
+      (setq log-text (buffer-string)))
+    (setf (unboxed-installed-file-log installed-file) log-text)))
+
 (defun unboxed--async-byte-compile-library (cat area pd installed-file)
   "Function to byte compile an unboxed elisp library from a package.
 This function defines the following global symbols during compile, so
@@ -267,8 +286,18 @@ a package may capture their value in an eval-when-compile form.
 
 ;; rebuild the unboxed library autoloads and byte-compile
 ;; the libraries
-(defun unboxed-finalize-install-library (all-cats cat files)
-  )
+(defun unboxed-finalize-install-library (db cat files)
+  (let ((loc (unboxed-file-category-location cat))
+	(area (unboxed--sexpr-db-area db))
+	autoloads-fn autoloads-file)
+    (setq autoloads-fn (unboxed-area-autoloads-file area)
+	  autoload-file (file-name-concat loc autoloads-fn))
+    (make-directory-autoloads loc autoloads-file)
+    ;;  ?
+    (unboxed--async-byte-compile-library cat area pd installed-file)
+    ()
+    ))
+
 
 ;; rebuild the directory file
 (defun unboxed-finalize-install-info (all-cats cat files)
