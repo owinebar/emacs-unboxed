@@ -1,0 +1,230 @@
+\input texinfo   @c -*-texinfo-*-
+@c %**start of header
+@setfilename unboxed.info
+@settitle Unboxed Package Manager
+@c %**end of header
+@copying
+Scalable package management for Emacs.
+
+Copyright @copyright{} 2023  Onnie Lynn Winebarger
+
+@quotation
+Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.3
+or any later version published by the Free Software Foundation;
+with no Invariant Sections, no Front-Cover Texts, and no Back-Cover Texts.
+A copy of the license is included in the section entitled ``GNU
+Free Documentation License''.
+
+A copy of the license is also available from the Free Software
+Foundation Web site at @url{https://www.gnu.org/licenses/fdl.html}.
+
+@end quotation
+
+The document was typeset with
+@uref{https://www.gnu.org/software/texinfo/, GNU Texinfo}.
+
+@end copying
+
+@dircategory Emacs
+@direntry
+* unboxed: (unboxed).   Scalable package management for Emacs
+@end direntry
+
+@titlepage
+@title Unboxed Package Manager 0.1
+@subtitle Scalable package management for Emacs
+@author Onnie Winebarger 
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+@end titlepage
+
+@c Output the table of the contents at the beginning.
+@contents
+
+@ifnottex
+@node Top
+@top Unboxed Package Manager
+
+@insertcopying
+@end ifnottex
+
+@c Generate the nodes for this menu with `C-c C-u C-m'.
+@menu
+* Overview::
+* Operating Model::
+* Installation::
+* Using unboxed::
+* Copying This Manual::
+* Index::
+@end menu
+
+@c Update all node entries with `C-c C-u C-n'.
+@c Insert new nodes with `C-c C-c n'.
+@node Overview, Operating Model, Top, Top
+@chapter Overview
+
+The unboxed package manager extends the built-in package manager by
+managing the files provided by the package individually.  This enables
+package-provided files of a particular type to be installed in a common
+location, rather than a package-specific location.  In this way, the
+``path'' variables of emacs, e.g. load-path, custom-theme-load-path,
+etc, only contain one additional directory for all installed packages
+rather than one directory per installed package.  This is the feature
+that makes unboxed package management scalable.  With the default
+package management system, having a hundred packages installed
+can have a noticeable impact on system performance simply due to the
+number of directories that require searching before a system package is
+found in the last entry on the list.  With unboxed package management,
+thousands of packages may be installed without any noticeable impact on
+system performance.
+
+The unboxed package manager also enhances the builtin package management
+by providing a list of ``unboxing areas'' for package management with
+nested scoping.  The default configuration defines two areas:  site and
+user.  The site unboxing area allows a site administrator to install
+packages in a system location for common use.  The user unboxing area is
+for packages installed by individual users.  The scoping rule means that
+site packages are only allowed to depend on other site packages or
+builtin packages.  The user area has the site area in scope, so user
+packages may depend on builtin, site, or other user packages.  Unboxing
+areas are defined by user customization variables.
+
+The unboxed package manager does not require any modification of files
+or directories created by the builtin package manager.  Packages may be
+switched between the builtin and the unboxed package managers freely, at
+least for packages that are ``unbox-able''.  
+
+@node Operating Model, Installation, Overview, Top
+@chapter Operating Model
+
+This chapter describes the model for managing packages in an ``unboxed''
+form.  
+
+@menu
+* File Categories::
+* Unboxing Areas::
+* Database::
+* Packages::
+* Installed Files::
+* Extending Builtin Package Management::
+@end menu
+
+@node File Categories, Unboxing Areas, Operating Model, Operating Model
+@section File Categories
+
+A file category is described by these properties
+@itemize 
+@item Name:
+Symbol identifying the category
+@item Area:
+Symbol identifying the unboxing area to which this category definition applies
+@item Path Variable:
+The variable containing the load-path associated with this type of file.
+@item Predicate:
+A predicate taking a file name and returning nil unless the file belongs
+to this category
+@item Location:
+String value identifying the path where package files in this category
+are installed
+@item install-files:
+Function that installs a list of files from a particular category
+@item finalize-install-files
+Function that finalizes the installation of files of this category from
+a set of packages in a transaction.  Used for updating area autoloads,
+byte-compiling installed libraries, etc
+@item remove-files
+Function to remove files of this type from a particular package
+@item finalize-remove-files
+Function to finalize the removal of files of a particular type for a
+transaction on a set of packages
+@end itemize
+
+@node Theme, Library, File Categories, File Categories
+@subsection Theme
+
+@node Library, Byte-Compiled, Theme, File Categories
+@subsection Library
+
+@node Byte-Compiled, Native-Compiled, Library, File Categories
+@subsection Byte-Compiled
+
+@node Native-Compiled, Module, Byte-Compiled, File Categories
+@subsection Native-Compiled
+
+@node Module, Info, Native-Compiled, File Categories
+@subsection Module
+
+@node Info, Ignore, Module, File Categories
+@subsection Info
+
+@node Ignore, Data, Info, File Categories
+@subsection Ignore
+
+@node Data,  , Ignore, File Categories
+@subsection Data
+
+@node Unboxing Areas, Database, File Categories, Operating Model
+@section Unboxing Areas
+
+@node Database, Packages, Unboxing Areas, Operating Model
+@section Database
+
+
+@node Packages, Installed Files, Database, Operating Model
+@section Packages
+
+@node Installed Files, Extending Builtin Package Management, Packages, Operating Model
+@section Installed Files
+
+@node Extending Builtin Package Management,  , Installed Files, Operating Model
+@section Extending Builtin Package Management
+
+@node Installation, Using unboxed, Operating Model, Top
+@chapter Installation
+
+
+@menu
+* Configuration::
+* Setup::
+@end menu
+
+@node Configuration, Setup, Installation, Installation
+@section Configuration
+
+@node Setup,  , Configuration, Installation
+@section Setup
+
+@node Using unboxed, Copying This Manual, Installation, Top
+@chapter Using unboxed
+
+
+
+@menu
+* Installing Packages::
+* Removing Packages::
+@end menu
+
+@node Installing Packages, Removing Packages, Using unboxed, Using unboxed
+@section Installing Packages
+
+@node Removing Packages,  , Installing Packages, Using unboxed
+@section Removing Packages
+
+@node Copying This Manual, Index, Using unboxed, Top
+@appendix Copying This Manual
+
+@c @menu
+@c * GNU Free Documentation License::  License for copying this manual.
+@c @end menu
+
+Get fdl.texi from https://www.gnu.org/licenses/fdl.html
+@c @include fdl.texi
+
+@node Index,  , Copying This Manual, Top
+@unnumbered Index
+
+@printindex cp
+
+@bye

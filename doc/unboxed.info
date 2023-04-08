@@ -1,0 +1,303 @@
+This is unboxed.info, produced by makeinfo version 6.5 from
+unboxed.texi.
+
+Scalable package management for Emacs.
+
+   Copyright (C) 2023 Onnie Lynn Winebarger
+
+     Permission is granted to copy, distribute and/or modify this
+     document under the terms of the GNU Free Documentation License,
+     Version 1.3 or any later version published by the Free Software
+     Foundation; with no Invariant Sections, no Front-Cover Texts, and
+     no Back-Cover Texts.  A copy of the license is included in the
+     section entitled "GNU Free Documentation License".
+
+     A copy of the license is also available from the Free Software
+     Foundation Web site at <https://www.gnu.org/licenses/fdl.html>.
+
+   The document was typeset with GNU Texinfo
+(https://www.gnu.org/software/texinfo/).
+
+INFO-DIR-SECTION Emacs
+START-INFO-DIR-ENTRY
+* unboxed: (unboxed).   Scalable package management for Emacs
+END-INFO-DIR-ENTRY
+
+
+File: unboxed.info,  Node: Top,  Next: Overview,  Up: (dir)
+
+Unboxed Package Manager
+***********************
+
+Scalable package management for Emacs.
+
+   Copyright (C) 2023 Onnie Lynn Winebarger
+
+     Permission is granted to copy, distribute and/or modify this
+     document under the terms of the GNU Free Documentation License,
+     Version 1.3 or any later version published by the Free Software
+     Foundation; with no Invariant Sections, no Front-Cover Texts, and
+     no Back-Cover Texts.  A copy of the license is included in the
+     section entitled "GNU Free Documentation License".
+
+     A copy of the license is also available from the Free Software
+     Foundation Web site at <https://www.gnu.org/licenses/fdl.html>.
+
+   The document was typeset with GNU Texinfo
+(https://www.gnu.org/software/texinfo/).
+
+* Menu:
+
+* Overview::
+* Operating Model::
+* Installation::
+* Using unboxed::
+* Copying This Manual::
+* Index::
+
+
+File: unboxed.info,  Node: Overview,  Next: Operating Model,  Prev: Top,  Up: Top
+
+1 Overview
+**********
+
+The unboxed package manager extends the built-in package manager by
+managing the files provided by the package individually.  This enables
+package-provided files of a particular type to be installed in a common
+location, rather than a package-specific location.  In this way, the
+"path" variables of emacs, e.g.  load-path, custom-theme-load-path, etc,
+only contain one additional directory for all installed packages rather
+than one directory per installed package.  This is the feature that
+makes unboxed package management scalable.  With the default package
+management system, having a hundred packages installed can have a
+noticeable impact on system performance simply due to the number of
+directories that require searching before a system package is found in
+the last entry on the list.  With unboxed package management, thousands
+of packages may be installed without any noticeable impact on system
+performance.
+
+   The unboxed package manager also enhances the builtin package
+management by providing a list of "unboxing areas" for package
+management with nested scoping.  The default configuration defines two
+areas: site and user.  The site unboxing area allows a site
+administrator to install packages in a system location for common use.
+The user unboxing area is for packages installed by individual users.
+The scoping rule means that site packages are only allowed to depend on
+other site packages or builtin packages.  The user area has the site
+area in scope, so user packages may depend on builtin, site, or other
+user packages.  Unboxing areas are defined by user customization
+variables.
+
+   The unboxed package manager does not require any modification of
+files or directories created by the builtin package manager.  Packages
+may be switched between the builtin and the unboxed package managers
+freely, at least for packages that are "unbox-able".
+
+
+File: unboxed.info,  Node: Operating Model,  Next: Installation,  Prev: Overview,  Up: Top
+
+2 Operating Model
+*****************
+
+This chapter describes the model for managing packages in an "unboxed"
+form.
+
+* Menu:
+
+* File Categories::
+* Unboxing Areas::
+* Database::
+* Packages::
+* Installed Files::
+* Extending Builtin Package Management::
+
+
+File: unboxed.info,  Node: File Categories,  Next: Unboxing Areas,  Prev: Operating Model,  Up: Operating Model
+
+2.1 File Categories
+===================
+
+A file category is described by these properties
+   * Name Symbol identifying the category
+   * Area Symbol identifying the area to which this category definition
+     applies
+
+* Menu:
+
+* Theme::
+* Library::
+* Byte-Compiled::
+* Native-Compiled::
+* Module::
+* Info::
+* Ignore::
+* Data::
+
+
+File: unboxed.info,  Node: Theme,  Next: Library,  Prev: File Categories,  Up: File Categories
+
+2.1.1 Theme
+-----------
+
+
+File: unboxed.info,  Node: Library,  Next: Byte-Compiled,  Prev: Theme,  Up: File Categories
+
+2.1.2 Library
+-------------
+
+
+File: unboxed.info,  Node: Byte-Compiled,  Next: Native-Compiled,  Prev: Library,  Up: File Categories
+
+2.1.3 Byte-Compiled
+-------------------
+
+
+File: unboxed.info,  Node: Native-Compiled,  Next: Module,  Prev: Byte-Compiled,  Up: File Categories
+
+2.1.4 Native-Compiled
+---------------------
+
+
+File: unboxed.info,  Node: Module,  Next: Info,  Prev: Native-Compiled,  Up: File Categories
+
+2.1.5 Module
+------------
+
+
+File: unboxed.info,  Node: Info,  Next: Ignore,  Prev: Module,  Up: File Categories
+
+2.1.6 Info
+----------
+
+
+File: unboxed.info,  Node: Ignore,  Next: Data,  Prev: Info,  Up: File Categories
+
+2.1.7 Ignore
+------------
+
+
+File: unboxed.info,  Node: Data,  Prev: Ignore,  Up: File Categories
+
+2.1.8 Data
+----------
+
+
+File: unboxed.info,  Node: Unboxing Areas,  Next: Database,  Prev: File Categories,  Up: Operating Model
+
+2.2 Unboxing Areas
+==================
+
+
+File: unboxed.info,  Node: Database,  Next: Packages,  Prev: Unboxing Areas,  Up: Operating Model
+
+2.3 Database
+============
+
+
+File: unboxed.info,  Node: Packages,  Next: Installed Files,  Prev: Database,  Up: Operating Model
+
+2.4 Packages
+============
+
+
+File: unboxed.info,  Node: Installed Files,  Next: Extending Builtin Package Management,  Prev: Packages,  Up: Operating Model
+
+2.5 Installed Files
+===================
+
+
+File: unboxed.info,  Node: Extending Builtin Package Management,  Prev: Installed Files,  Up: Operating Model
+
+2.6 Extending Builtin Package Management
+========================================
+
+
+File: unboxed.info,  Node: Installation,  Next: Using unboxed,  Prev: Operating Model,  Up: Top
+
+3 Installation
+**************
+
+* Menu:
+
+* Configuration::
+* Setup::
+
+
+File: unboxed.info,  Node: Configuration,  Next: Setup,  Prev: Installation,  Up: Installation
+
+3.1 Configuration
+=================
+
+
+File: unboxed.info,  Node: Setup,  Prev: Configuration,  Up: Installation
+
+3.2 Setup
+=========
+
+
+File: unboxed.info,  Node: Using unboxed,  Next: Copying This Manual,  Prev: Installation,  Up: Top
+
+4 Using unboxed
+***************
+
+* Menu:
+
+* Installing Packages::
+* Removing Packages::
+
+
+File: unboxed.info,  Node: Installing Packages,  Next: Removing Packages,  Prev: Using unboxed,  Up: Using unboxed
+
+4.1 Installing Packages
+=======================
+
+
+File: unboxed.info,  Node: Removing Packages,  Prev: Installing Packages,  Up: Using unboxed
+
+4.2 Removing Packages
+=====================
+
+
+File: unboxed.info,  Node: Copying This Manual,  Next: Index,  Prev: Using unboxed,  Up: Top
+
+Appendix A Copying This Manual
+******************************
+
+Get fdl.texi from https://www.gnu.org/licenses/fdl.html
+
+
+File: unboxed.info,  Node: Index,  Prev: Copying This Manual,  Up: Top
+
+Index
+*****
+
+
+
+Tag Table:
+Node: Top911
+Node: Overview1845
+Node: Operating Model3825
+Node: File Categories4170
+Node: Theme4613
+Node: Library4736
+Node: Byte-Compiled4861
+Node: Native-Compiled5008
+Node: Module5158
+Node: Info5281
+Node: Ignore5391
+Node: Data5503
+Node: Unboxing Areas5598
+Node: Database5745
+Node: Packages5873
+Node: Installed Files6002
+Node: Extending Builtin Package Management6173
+Node: Installation6369
+Node: Configuration6537
+Node: Setup6672
+Node: Using unboxed6770
+Node: Installing Packages6962
+Node: Removing Packages7129
+Node: Copying This Manual7270
+Node: Index7486
+
+End Tag Table
