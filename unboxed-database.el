@@ -292,16 +292,27 @@ table assuming no packages have been unboxed"
 			,(unboxed--create-sexpr-db name areas))))))
     dbs))
 
+;;; FIXME: should validate db structure
 (defun unboxed--load-database (area)
   "Load the database associated with area"
   (let ((db-path (unboxed--area-db-path area))
 	db)
-    (when (
-    ))
+    (when (file-readable-p db-path)
+      (with-temp-buffer
+	(insert-file-contents db-path)
+	(setq db (read (current-buffer)))))
+    db))
 
-(defun unboxed--save-database (area-name areas)
-  "Save the database associated with area-name in areas"
-  )
+(defun unboxed--save-database (db)
+  "Save the database"
+  (let ((db-path (unboxed--area-db-path area)))    
+    (with-temp-buffer
+      (pp db (current-buffer))
+      (if (file-exists-p db-path)
+	  (delete-file db-path))
+      (write-region (point-min) (point-max) db-path 'excl))
+    nil))
+
 
 
 (provide 'unboxed-database)
