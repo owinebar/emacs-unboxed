@@ -53,7 +53,7 @@ will be stored"
   :type '(choice :tag "Predicate" function nil)
   :group 'unboxed-user)
 (defcustom unboxed-site-db-path 
-  (file-name-concate data-directory "unboxed-site-packages.sexpr")
+  (file-name-concat data-directory "unboxed-site-packages.sexpr")
   "Directory in which the database tracking installed system packages
 will be stored" 
   :type 'directory
@@ -208,7 +208,7 @@ packages will be installed."
 	  unboxed-install-data unboxed-finalize-install-data
 	  unboxed-remove-data unboxed-finalize-remove-data)))
 
-(defconst unboxed-default-site-categories
+(defconst unboxed--default-site-categories
   `((theme site custom-theme-load-path
 	   unboxed-theme-p unboxed-site-theme-directory
 	   unboxed-install-theme unboxed-finalize-install-theme
@@ -248,7 +248,7 @@ packages will be installed."
 	  unboxed-user-data-directory-patterns
 	  unboxed-user-package-patches
 	  unboxed-user-autoloads-file
-	  ,unboxed-default-user-categories)
+	  ,unboxed--default-user-categories)
     (site (unboxed-site-package-archive ,@package-directory-list)
 	  unboxed-site-db-path
 	  unboxed-site-area-pred
@@ -257,10 +257,10 @@ packages will be installed."
 	  unboxed-site-data-directory-patterns
 	  unboxed-site-package-patches
 	  unboxed-site-autoloads-file
-	  ,unboxed-default-site-categories))
+	  ,unboxed--default-site-categories))
   "Areas for unboxing packages corresponding to source of the boxed
 packages.  Typically there are two areas for unboxing- site and user."
-  :type `(repeat :tag "Area Configuration" ,unboxed--area-config-customization-type)
+  :type `(repeat :tag "Area Configuration" ,unboxed--area-customization-type)
   :group 'unboxed)
 
 (defcustom unboxed-user-theme-libraries nil
@@ -340,35 +340,20 @@ site packages."
 ;;  Currently the only option is a simple lisp object representation
 ;;  Eventually should use a sqlite format.  Taking this approach to avoid
 ;;  migration issues.
-(defcustom unboxed-database-format
+(defcustom unboxed-database-format nil
   "Format of package database file"
   :type '(choice (const :tag "Simple LISP object" sexpr))
   :group 'unboxed)
 
+    
+;;  This predicate function will be redefined by the setter for the
+;;  pcase patterns for matching and replacing sexprs constructed by
+;;  setter of the customization variable 
+;;  if the sexpr is a match, the return value is a one-element list
+;;  containing the replacement value
+(defun unboxed--pcase-replace-sexpr-p (sexpr replacement) nil)
 
-(defcustom unboxed-user-data-directory-patterns
-  nil
-  "A list of pcase patterns that match against known expressions used to
-compute a packages installation directory at either compile or load time.
-Any matches will be hard-coded to be the value of the unboxed package's
-data directory as a string."
-  :type '(repeat (sexpr :tag "pcase pattern"))
-  :group unboxed-user
-  :setter #'unboxed--set-pcase-replace-sexpr-p
-  )
-
-(defcustom unboxed-site-data-directory-patterns
-  nil
-  "A list of pcase patterns that match against known expressions used to
-compute a packages installation directory at either compile or load time.
-Any matches will be hard-coded to be the value of the unboxed package's
-data directory as a string."
-  :type '(repeat (sexpr :tag "pcase pattern"))
-  :group unboxed-site
-  :setter #'unboxed--set-pcase-replace-sexpr-p
-  )
-
-(defun unboxed--set-pcase-replace-sexpr-p (patterns)
+(defun unboxed--set-pcase-replace-sexpr-p (sym patterns)
   (let* ((subst-var (make-symbol "value"))
 	 (sexpr-var (make-symbol "sexpr"))
 	 (clauses (mapcar (lambda (pattern)
@@ -385,15 +370,32 @@ data directory as a string."
       (goto-char 0)
       ;; compile the defun and install it - do not display the result
       ;; in the echo area 
-      (compile-defun t))))
-    
-    
-;;  This predicate function will be redefined by the setter for the
-;;  pcase patterns for matching and replacing sexprs constructed by
-;;  setter of the customization variable 
-;;  if the sexpr is a match, the return value is a one-element list
-;;  containing the replacement value
-(defun unboxed--pcase-replace-sexpr-p (sexpr replacement) nil)
+      (compile-defun t)
+      (set-default-toplevel-value sym patterns))))
+
+
+(defcustom unboxed-user-data-directory-patterns
+  nil
+  "A list of pcase patterns that match against known expressions used to
+compute a packages installation directory at either compile or load time.
+Any matches will be hard-coded to be the value of the unboxed package's
+data directory as a string."
+  :type '(repeat (sexpr :tag "pcase pattern"))
+  :group 'unboxed-user
+  :set #'unboxed--set-pcase-replace-sexpr-p
+  )
+
+(defcustom unboxed-site-data-directory-patterns
+  nil
+  "A list of pcase patterns that match against known expressions used to
+compute a packages installation directory at either compile or load time.
+Any matches will be hard-coded to be the value of the unboxed package's
+data directory as a string."
+  :type '(repeat (sexpr :tag "pcase pattern"))
+  :group 'unboxed-site
+  :set #'unboxed--set-pcase-replace-sexpr-p
+  )
+
 
 (provide 'unboxed-custom)
 
