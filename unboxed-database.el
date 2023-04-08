@@ -25,6 +25,10 @@
 
 ;;; Code:
 
+(require 'unboxed-decls)
+(require 'unboxed-categories)
+(require 'unboxed-file-management)
+
 (defun unboxed--package-in-boxes (pd boxes)
   (let ((d (package-desc-dir pd)))
     (and d

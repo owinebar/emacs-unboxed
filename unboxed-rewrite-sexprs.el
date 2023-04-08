@@ -25,6 +25,7 @@
 ;; of surrounding text.
 
 ;;; Code:
+
 (require 'unboxed-custom)
 
 (define-error 'unboxed-replace-sexpr "Bad sexpr parse")

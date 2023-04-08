@@ -40,10 +40,10 @@
 (require 'seq)
 (require 'async)
 (require 'unboxed-decls)
-(require 'unboxed-categories)
-(require 'unboxed-file-management)
 (require 'unboxed-custom)
 (require 'unboxed-rewrite-sexprs)
+(require 'unboxed-categories)
+(require 'unboxed-file-management)
 (require 'unboxed-database)
 
 (defvar unboxed--dbs nil)
