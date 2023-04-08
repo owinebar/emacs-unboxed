@@ -45,6 +45,16 @@ unboxed installation."
 	 (not (string-suffix-p "-package" base))
 	 (not (string-suffix-p "-autoloads" base)))))
 
+(defun unboxed-data-library-p (path)
+  "Predicate for elisp libraries contained in package data directorys
+that should be compiled there." 
+  (let ((ext (file-name-extension path))
+	(base (file-name-nondirectory path))
+	(dir (file-name-directory path)))
+    (and ext (string= ext "el")
+	 (not (string-suffix-p "-package" base))
+	 (not (string-suffix-p "-autoloads" base)))))
+
 ;;; modules to install in the package lisp directory
 (defun unboxed-module-p (path)
   "Predicate for elisp modules contained in packages that should be
