@@ -93,6 +93,14 @@ or site packages
   (unboxed--area-categories
    (unboxed--sexpr-db-area db)))
 
+(defun unboxed--sexpr-db-category-location (db catname)
+  (let ((cats (unboxed--sexpr-db-categories db))
+	result)
+    (setq result (assq catname cats)
+	  result (and result
+		      (unboxed-file-category-location (cdr result))))
+    result))
+
 (cl-defstruct (unboxed-file-category
                (:constructor unboxed-file-category-create)
 	       (:copier unboxed-file-category-copy))
@@ -313,7 +321,6 @@ installation manager
   )
 
 (provide 'unboxed-decls)
-
 ;;; unboxed-decls.el ends here
 
 ;; 
