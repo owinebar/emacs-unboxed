@@ -180,7 +180,7 @@ a package may capture their value in an eval-when-compile form.
 	(push (unboxed-installed-file-create :package pkg
 					     :category cname
 					     :file installed-file
-					     :pkg-path file)
+					     :package-source file)
 	      installed)))
     installed))
 
@@ -257,6 +257,7 @@ a package may capture their value in an eval-when-compile form.
 
 (defun unboxed-install-module (area pd files)
   (unboxed--install-list 'module area pd #'unboxed--install-simple-copy))
+
 (defun unboxed-install-info (area pd files)
   (unboxed--install-list 'info area pd files #'unboxed--install-simple-copy))
 
@@ -298,6 +299,7 @@ a package may capture their value in an eval-when-compile form.
 
 (defun unboxed-remove-info (area files)
   (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+
 (defun unboxed-remove-data (area files)
   (unboxed--remove-list area files #'unboxed--remove-simple-delete))
 
@@ -335,7 +337,7 @@ a package may capture their value in an eval-when-compile form.
   (let ((ls files)
 	file)
     (while ls
-      (pop file ls)
+      (setq file (pop ls))
       (unboxed--install-info-file-in-dir file))
     files))
 
