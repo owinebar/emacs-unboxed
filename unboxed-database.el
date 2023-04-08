@@ -31,7 +31,6 @@
 	 (stringp d)
 	 (seq-filter (lambda (p) (string-prefix-p p d)) boxes))))
 
-
 (defun unboxed--init-package-desc (mgr pd)
   "Initialize an unboxed package descriptor from the manager field and a pre-existing package-desc"
   (let ((s (unboxed-package-desc-create :manager 'package))
