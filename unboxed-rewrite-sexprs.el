@@ -25,34 +25,10 @@
 ;; of surrounding text.
 
 ;;; Code:
+(require 'unboxed-custom)
+
 (define-error 'unboxed-replace-sexpr "Bad sexpr parse")
 
-(defun unboxed--set-pcase-replace-sexpr-p (patterns)
-  (let* ((subst-var (make-symbol "value"))
-	 (sexpr-var (make-symbol "sexpr"))
-	 (clauses (mapcar (lambda (pattern)
-			    `(,pattern (list ,subst-var)))
-			  patterns))
-	 (defun-expr
-	   `(defun unboxed--pcase-replace-sexpr-p (,sexpr-var  ,subst-var) 
-	      (pcase ,sexpr-var
-		,@clauses
-		(_ nil)))))
-    (with-temp-buffer
-      (prin1 defun-expr (current-buffer))
-      (terpri (current-buffer))
-      (goto-char 0)
-      ;; compile the defun and install it - do not display the result
-      ;; in the echo area 
-      (compile-defun t))))
-    
-    
-;;  This predicate function will be redefined by the setter for the
-;;  pcase patterns for matching and replacing sexprs constructed by
-;;  setter of the customization variable 
-;;  if the sexpr is a match, the return value is a one-element list
-;;  containing the replacement value
-(defun unboxed--pcase-replace-sexpr-p (sexpr replacement) nil)
 
 ;; assumes parse-sexp-ignore-comments is t
 (defun unboxed--back-sexpr (v p0)
@@ -144,7 +120,7 @@ sexpr containing a #N#."
 (defun unboxed--check-invalid-read (pos0)
   "Utility function to check for whether an invalid-read-syntax
 error corresponded to a subexpression that should produce an
-object, and dispatching accordingly, or something like "." that is
+object, and dispatching accordingly, or something like `.' that is
 purely syntactic"
   (let (p1)
     (cond
