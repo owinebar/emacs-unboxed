@@ -26,8 +26,8 @@
 ;;; Code:
 
 (cl-defstruct (unboxed--area
-	       (:constructor unboxed--proto-area-create)
-	       (:copier unboxed--proto-area-copy))
+	       (:constructor unboxed--area-create)
+	       (:copier unboxed--area-copy))
   "Structure recording the parameters for an unboxed area, e.g. for user
 or site packages
   Slots:
@@ -175,7 +175,7 @@ from a file.
   `keys' Keywords for use with constructor for the slot at
          the corresponding index  
   `slot-info' Value of (cl-struct-slot-info 'pacakge-desc)"
-  (version 1 :read-only)
+  (version 1 :read-only t)
   seq-type
   keys
   slot-info)
@@ -239,10 +239,9 @@ installation manager
      :slot-info slot-info)))
 
 (defvar unboxed--struct-layouts
-  (mapcar (lambda (name) `(,name . ,(unboxed-make-struct-layout name)))
+  (mapcar (lambda (name) `(,name . ,(unboxed--make-struct-layout name)))
 	  '(unboxed--struct-layout
-	    unboxed--proto-area
-	    unboxed--area-config
+	    unboxed--area
 	    unboxed--sexpr-db
 	    unboxed-file-category
 	    unboxed-package-desc
