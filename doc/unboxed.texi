@@ -56,6 +56,7 @@ The document was typeset with
 * Operating Model::
 * Installation::
 * Using unboxed::
+* Missing Features::
 * Copying This Manual::
 * Index::
 @end menu
@@ -108,6 +109,7 @@ form.
 * Database::
 * Packages::
 * Installed Files::
+* Transactions::
 * Extending Builtin Package Management::
 @end menu
 
@@ -175,8 +177,11 @@ transaction on a set of packages
 @node Packages, Installed Files, Database, Operating Model
 @section Packages
 
-@node Installed Files, Extending Builtin Package Management, Packages, Operating Model
+@node Installed Files, Transactions, Packages, Operating Model
 @section Installed Files
+
+@node  Transactions, Extending Builtin Package Management, Installed Files, Operating Model
+@section Transactions
 
 @node Extending Builtin Package Management,  , Installed Files, Operating Model
 @section Extending Builtin Package Management
@@ -196,7 +201,7 @@ transaction on a set of packages
 @node Setup,  , Configuration, Installation
 @section Setup
 
-@node Using unboxed, Copying This Manual, Installation, Top
+@node Using unboxed, Missing Features, Installation, Top
 @chapter Using unboxed
 
 
@@ -212,7 +217,19 @@ transaction on a set of packages
 @node Removing Packages,  , Installing Packages, Using unboxed
 @section Removing Packages
 
-@node Copying This Manual, Index, Using unboxed, Top
+@node  Missing Features, Copying This Manual, Using unboxed, Top
+@chapter Missing Features
+
+@itemize
+@item
+Transactions
+@item
+Verification - support for updating structures, checking for consistency
+between information in the database, the boxed package directories, and
+the unboxed installation locations.
+@end itemize
+
+@node Copying This Manual, Index, Missing Features, Top
 @appendix Copying This Manual
 
 @c @menu
