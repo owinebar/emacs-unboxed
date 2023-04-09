@@ -87,6 +87,15 @@ and 'dir' files as info files"
 	(string= (file-name-nondirectory path) "dir"))))
 
 ;;; files to ignore
+(defun unboxed-compiled-elisp-p (path)
+  "Predicate for files contained in packages that should be installed
+in the unboxed info directory. This predicate recognizes all `*.info'
+and 'dir' files as info files"
+  (let ((ext (file-name-extension path)))
+    (and ext
+	 (or (string= ext "elc")
+	     (string= ext "eln")))))
+
 (defun unboxed-byte-compiled-p (path)
   "Predicate for files contained in packages that should be installed
 in the unboxed info directory. This predicate recognizes all `*.info'
