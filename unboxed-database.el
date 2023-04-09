@@ -53,22 +53,33 @@
 			     (setf (seq-elt s idx) elt)))
 			 pd)))))
 
-(defun unboxed--area-settings->struct (name boxes db-path cat-settings)
+(defun unboxed--area-settings->struct (name
+				       boxes db-path
+				       pred excluded
+				       theme-libs datadir-pats
+				       patches autoloads
+				       cat-settings)
   (let ((cats
 	 (mapcar (lambda (args)
 		   (let ((cat (apply #'unboxed--categories-setting->struct
 				     args)))
-		     `(,(unboxed--file-category-name cat) . ,cat)))
+		     `(,(unboxed-file-category-name cat) . ,cat)))
 		 cat-settings)))
-    (unboxed--make-area name boxes db-path cats)))
+    (unboxed--make-area name
+			boxes db-path
+			pred excluded
+			theme-libs datadir-pats
+			patches autoloads
+			cats)))
 
-(defun unboxeds--areas-from-settings (areas-settings)
+(defun unboxed--areas-from-settings (areas-settings)
   (let ((areas
 	 (mapcar
 	  (lambda (area-settings)
 	    (let ((area (apply #'unboxed--area-settings->struct
 			       area-settings)))
-	      `(,(unboxed--area-name area) . ,area))))))
+	      `(,(unboxed--area-name area) . ,area)))
+	  areas-settings)))
     areas))
 
 (defun unboxed--scoped-areas (area-name areas)
@@ -271,11 +282,11 @@ table assuming no packages have been unboxed"
 	      (puthash pkgs (unboxed-package-desc-name upd) upd)))
 	  (seq-filter
 	   (lambda (pr)
-	     (let ((pd (cdr pr))
+	     (let ((pd (cadr pr))
 		   paths)
 	       (setq paths (unboxed--package-in-boxes pd box-paths))
 	       (and paths pr)))
-	   (package-alist)))
+	   package-alist))
     ;; these record installed files managed by unboxed, so they start out empty
     (setq inst (make-hash-table :test #'equal))
     (unboxed--sexpr-db-create
@@ -289,11 +300,12 @@ table assuming no packages have been unboxed"
   (let ((areas (unboxed--areas-from-settings area-settings))
 	dbs)
     (setq dbs
-	  (mapcar (lambda (area)
-		    (let ((name (unboxed--area-name area)))
+	  (mapcar (lambda (area-pair)
+		    (let ((name (unboxed--area-name (cdr area-pair))))
 		      `(,name
 			.
-			,(unboxed--create-sexpr-db name areas))))))
+			,(unboxed--create-sexpr-db name areas))))
+		  areas))
     dbs))
 
 ;;; FIXME: should validate db structure

@@ -284,7 +284,7 @@ installation manager
 			   autoloads-conf
 			   cats)
   (let ((boxes (unboxed--resolve-conf-list boxes-conf))
-	(db (unboxed--resolve-conf-val db-path-conf))
+	(db-path (unboxed--resolve-conf-val db-path-conf))
 	(pred (unboxed--resolve-conf-func pred-conf))
 	(excluded (unboxed--resolve-conf-val excluded-conf))
 	(theme-libs (unboxed--resolve-conf-val theme-libs-conf))

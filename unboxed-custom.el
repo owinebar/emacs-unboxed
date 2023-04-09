@@ -94,7 +94,7 @@ be installed.  Will be added to the load-path."
 be installed.  Will be added to the load-path." 
   :type 'directory
   :group 'unboxed-user)
-(defcustom unboxed-user-themes-directory
+(defcustom unboxed-user-theme-directory
   (file-name-concat user-emacs-directory "themes")
   "Directory in which unboxed theme files from user packages will be
 installed." 
@@ -156,7 +156,7 @@ be installed.  Will be added to the load-path."
   :type 'directory
   :group 'unboxed-site)
 
-(defcustom unboxed-site-themes-directory
+(defcustom unboxed-site-theme-directory
   (file-name-concat user-emacs-directory "site-themes")
   "The directory in which unboxed theme files for system packages will
 be installed" 
@@ -219,12 +219,12 @@ packages will be installed."
 	     unboxed-remove-library unboxed-finalize-remove-library)
     (byte-compiled site load-path
 		   unboxed-byte-compiled-p unboxed-site-byte-compiled-directory
-		   unboxed-install-byte-compiled unboxed-finalize-install-byte-compiled
-		   unboxed-remove-byte-compiled unboxed-finalize-remove-byte-compiled)
+		   nil nil
+		   unboxed-remove-byte-compiled nil)
     (native-compiled site native-comp-eln-load-path
 		     unboxed-native-compiled-p unboxed-site-native-compiled-directory
-		     unboxed-install-native-compiled unboxed-finalize-install-native-compiled
-		     unboxed-remove-native-compiled unboxed-finalize-remove-native-compiled)
+		     nil nil
+		     unboxed-remove-native-compiled nil)
     (module site load-path
 	    unboxed-module-p unboxed-site-library-directory
 	    unboxed-install-module unboxed-finalize-install-module

@@ -263,6 +263,11 @@ a package may capture their value in an eval-when-compile form.
 (defun unboxed-install-info (area pd files)
   (unboxed--install-list 'info area pd files #'unboxed--install-simple-copy))
 
+(defun unboxed-install-byte-compiled (area pd files)
+  nil)
+(defun unboxed-install-native-compiled (area pd files)
+  nil)
+
 (defun unboxed-install-data (area pd files)
   (let ((loc (unboxed-file-category-location
 	      (cdr (assoc 'data
@@ -295,6 +300,11 @@ a package may capture their value in an eval-when-compile form.
   
 (defun unboxed-remove-library (area files)
   (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+
+(defun unboxed-remove-byte-compiled (area pd files)
+  nil)
+(defun unboxed-remove-native-compiled (area pd files)
+  nil)
 
 (defun unboxed-remove-module (area files)
   (unboxed--remove-list area files #'unboxed--remove-simple-delete))
@@ -333,6 +343,10 @@ a package may capture their value in an eval-when-compile form.
 	(setq new-installed (nconc comp-file new-installed))))
     new-installed))
 
+(defun unboxed-finalize-install-byte-compiled (area pd files)
+  nil)
+(defun unboxed-finalize-nstall-native-compiled (area pd files)
+  nil)
 
 ;; rebuild the directory file
 (defun unboxed-finalize-install-info (db cat files)
@@ -357,6 +371,12 @@ a package may capture their value in an eval-when-compile form.
   nil)
   
 (defun unboxed-finalize-remove-library (db cat files)
+  nil)
+
+(defun unboxed-finalize-remove-byte-compiled (area pd files)
+  nil)
+
+(defun unboxed-finalize-remove-native-compiled (area pd files)
   nil)
 
 (defun unboxed-finalize-remove-module (db cat files)
