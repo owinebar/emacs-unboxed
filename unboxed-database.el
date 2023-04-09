@@ -30,10 +30,13 @@
 (require 'unboxed-file-management)
 
 (defun unboxed--package-in-boxes (pd boxes)
-  (let ((d (package-desc-dir pd)))
-    (and d
-	 (stringp d)
-	 (seq-filter (lambda (p) (string-prefix-p p d)) boxes))))
+  ;(setq boxes (mapcar #'expand-file-name boxes))
+  (let ((d (package-desc-dir pd))
+	result)
+    (when (and d (stringp d))
+      (setq d (expand-file-name d)
+	    result (seq-filter (lambda (p) (string-prefix-p p d)) boxes)))
+    result))
 
 (defun unboxed--init-package-desc (mgr pd)
   "Initialize an unboxed package descriptor from the manager field and a pre-existing package-desc"
@@ -51,7 +54,8 @@
 	(seq-map-indexed (lambda (elt idx)
 			   (when (>= idx i0)
 			     (setf (seq-elt s idx) elt)))
-			 pd)))))
+			 pd)))
+    s))
 
 (defun unboxed--area-settings->struct (name
 				       boxes db-path
@@ -275,11 +279,13 @@ table assuming no packages have been unboxed"
     ;;     of site administrators
     (setq areas (unboxed--scoped-areas area-name areas))
     (setq area (cdar areas))
-    (setq box-paths (unboxed--area-boxes area))
+    (setq box-paths (mapcar #'expand-file-name (unboxed--area-boxes area)))
     (setq pkgs (make-hash-table :test #'eq))
-    (mapc (lambda (pd)
-	    (let ((upd (unboxed--init-package-desc 'package pd)))
-	      (puthash pkgs (unboxed-package-desc-name upd) upd)))
+    (mapc (lambda (pd-pr)
+	    (let ((pd (cadr pd-pr))
+		  upd)
+	      (setq upd (unboxed--init-package-desc 'package pd))
+	      (puthash (unboxed-package-desc-name upd) upd pkgs)))
 	  (seq-filter
 	   (lambda (pr)
 	     (let ((pd (cadr pr))
