@@ -98,7 +98,7 @@
   areas)
 
 
-(defun unboxed--package-single-p (pd)
+(defun unboxed-package-single-p (pd)
   (let ((d (package-desc-dir pd))
 	(name (symbol-name (package-desc-name pd)))
 	all main auto pkg r)
@@ -112,7 +112,7 @@
     r))
 
 
-(defun unboxed--package-simple-p (pd)
+(defun unboxed-package-simple-p (pd)
   (let ((d (package-desc-dir pd))
 	(name (symbol-name (package-desc-name pd)))
 	(no-subdirs t)
@@ -123,8 +123,11 @@
 	    no-subdirs (file-directory-p fn)))
     no-subdirs))
 
-(defun unboxed--package-any-p (pd)
+(defun unboxed-package-any-p (pd)
   t)
+
+(defun unboxed-package-none-p (pd)
+  nil)
 
 (defun unboxed--excluded-package-regex (ls)
   (let (re-ls syms re e)
@@ -146,7 +149,8 @@
 
 (defun unboxed--apply-package-pred (pred excluded-re pd)
   (let (rv)
-    (unless (string-match-p excluded-re (unboxed--package-desc-name pd))
+    (unless (string-match-p excluded-re
+			    (symbol-name (unboxed-package-desc-name pd)))
       (setq rv (funcall pred pd)))
     rv))
 
@@ -229,10 +233,10 @@
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
-	cats installed-by-cat pkgs-to-unbox ls pd)
+	cats installed-by-cat pkgs-to-unbox ls pd cat-name new-installed)
     (setq cats (unboxed--area-categories area)
-	  installed-by-cat (mapcar (lambda (c)
-				     `(,(unboxed-file-category-name c)))
+	  installed-by-cat (mapcar (lambda (c-pr)
+				     `(,(unboxed-file-category-name (cdr c-pr))))
 				   cats))
     (setq pkgs-to-unbox (unboxed--packages-to-unbox db)
 	  ls pkgs-to-unbox)
@@ -241,10 +245,13 @@
 	    installed-by-cat (unboxed--unbox-package db pd installed-by-cat)))
     (setq ls cats)
     (while ls
-      (setq cat (pop ls)
+      (setq cat (cdr (pop ls))
+	    cat-name (unboxed-file-category-name cat)
 	    finalize-install-files (unboxed-file-category-finalize-install-files cat)
-	    cat-installed-files (cdr (assq cat installed-by-cat))
-	    db (funcall finalize-install-files db cat-installed-files)))
+	    cat-installed-files (cdr (assq cat-name installed-by-cat))
+	    new-installed (nconc (funcall finalize-install-files db
+					  cat cat-installed-files)
+				 new-installed)))
     db))
 
 (defun unboxed--rebox-package-list-in-db (db pkg-ls)
@@ -298,6 +305,7 @@ table assuming no packages have been unboxed"
     (unboxed--sexpr-db-create
      :layouts unboxed--struct-layouts
      :areas areas
+     :area area
      :packages pkgs
      :installed inst)))
 

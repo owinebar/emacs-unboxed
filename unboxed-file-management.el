@@ -332,10 +332,10 @@ a package may capture their value in an eval-when-compile form.
 (defun unboxed-finalize-install-library (db cat files)
   (let ((loc (unboxed-file-category-location cat))
 	(area (unboxed--sexpr-db-area db))
-	autoloads-fn autoloads-file ls inst comp-file)
-    (setq autoloads-fn (unboxed-area-autoloads-file area)
+	autoloads-fn autoloads-file ls inst comp-file new-installed)
+    (setq autoloads-fn (unboxed--area-autoloads-file area)
 	  autoload-file (file-name-concat loc autoloads-fn)
-	  ls files new-installed)
+	  ls files)
     (make-directory-autoloads loc autoloads-file)
     (while ls
       (setq inst (pop ls)
@@ -344,9 +344,9 @@ a package may capture their value in an eval-when-compile form.
 	(setq new-installed (nconc comp-file new-installed))))
     new-installed))
 
-(defun unboxed-finalize-install-byte-compiled (area pd files)
+(defun unboxed-finalize-install-byte-compiled (area cat files)
   nil)
-(defun unboxed-finalize-nstall-native-compiled (area pd files)
+(defun unboxed-finalize-install-native-compiled (area cat files)
   nil)
 
 ;; rebuild the directory file
