@@ -25,6 +25,8 @@
 
 ;;; Code:
 
+(require 'package)
+
 (cl-defstruct (unboxed--area
 	       (:constructor unboxed--area-create)
 	       (:copier unboxed--area-copy))

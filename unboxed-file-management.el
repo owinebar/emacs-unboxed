@@ -25,6 +25,7 @@
 
 ;;; Code:
 
+(require 'async)
 (require 'unboxed-decls)
 (require 'unboxed-categories)
 
