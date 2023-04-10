@@ -247,7 +247,7 @@ packages will be installed."
 	  unboxed-user-theme-libraries
 	  unboxed-user-data-directory-patterns
 	  unboxed-user-package-patches
-	  unboxed-user-autoloads-file
+	  unboxed-user-autoloads-filename
 	  ,unboxed--default-user-categories)
     (site (unboxed-site-package-archive ,@package-directory-list)
 	  unboxed-site-db-path
@@ -256,7 +256,7 @@ packages will be installed."
 	  unboxed-site-theme-libraries
 	  unboxed-site-data-directory-patterns
 	  unboxed-site-package-patches
-	  unboxed-site-autoloads-file
+	  unboxed-site-autoloads-filename
 	  ,unboxed--default-site-categories))
   "Areas for unboxing packages corresponding to source of the boxed
 packages.  Typically there are two areas for unboxing- site and user."

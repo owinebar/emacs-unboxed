@@ -334,8 +334,10 @@ a package may capture their value in an eval-when-compile form.
 	(area (unboxed--sexpr-db-area db))
 	autoloads-fn autoloads-file ls inst comp-file new-installed)
     (setq autoloads-fn (unboxed--area-autoloads-file area)
-	  autoload-file (file-name-concat loc autoloads-fn)
+	  autoloads-file (file-name-concat loc autoloads-fn)
 	  ls files)
+    (message "autoloads fn %s" autoloads-fn)
+    (message "autoloads file %s" autoloads-file)
     (make-directory-autoloads loc autoloads-file)
     (while ls
       (setq inst (pop ls)

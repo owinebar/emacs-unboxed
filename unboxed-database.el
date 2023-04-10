@@ -224,20 +224,29 @@
     (setq ls cats)
     (while ls
       (setq cat (pop ls)
-	    finalize-install-files (unboxed-file-category-finalize-install-files cat)
-	    cat-installed-files (cdr (assq cat installed-by-cat))
-	    db (funcall finalize-install-files db cat-installed-files)))
+	    finalize-install-files (unboxed-file-category-finalize-install-files cat))
+      (when finalize-install-files
+	(setq cat-installed-files (cdr (assq cat installed-by-cat))
+	      db (funcall finalize-install-files db cat-installed-files))))
     db))
 
 (defun unboxed--unbox-package-list-in-db (db pkg-ls)
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
-	cats installed-by-cat pkgs-to-unbox ls pd cat-name new-installed)
+	cats installed-by-cat pkgs-to-unbox ls pd
+	cat-name new-installed cat loc)
     (setq cats (unboxed--area-categories area)
+	  ls cats
 	  installed-by-cat (mapcar (lambda (c-pr)
 				     `(,(unboxed-file-category-name (cdr c-pr))))
 				   cats))
+    (while ls
+      (setq cat (cdr (pop ls)))
+      (setq loc (unboxed-file-category-location cat))
+      (when (stringp loc)
+	(unless (file-accessible-directory-p loc)
+	  (make-directory loc t))))
     (setq pkgs-to-unbox (unboxed--packages-to-unbox db)
 	  ls pkgs-to-unbox)
     (while ls
@@ -247,11 +256,12 @@
     (while ls
       (setq cat (cdr (pop ls))
 	    cat-name (unboxed-file-category-name cat)
-	    finalize-install-files (unboxed-file-category-finalize-install-files cat)
-	    cat-installed-files (cdr (assq cat-name installed-by-cat))
-	    new-installed (nconc (funcall finalize-install-files db
-					  cat cat-installed-files)
-				 new-installed)))
+	    finalize-install-files (unboxed-file-category-finalize-install-files cat))
+      (when finalize-install-files
+	(setq cat-installed-files (cdr (assq cat-name installed-by-cat))
+	      new-installed (nconc (funcall finalize-install-files db
+					    cat cat-installed-files)
+				   new-installed))))
     db))
 
 (defun unboxed--rebox-package-list-in-db (db pkg-ls)
