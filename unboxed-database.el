@@ -29,6 +29,11 @@
 (require 'unboxed-categories)
 (require 'unboxed-file-management)
 
+(defun unboxed--installed-file-key (inst)
+  (file-name-concat
+   (symbol-name (unboxed-installed-file-category inst))
+   (unboxed-installed-file-file inst)))
+
 (defun unboxed--package-in-boxes (pd boxes)
   ;(setq boxes (mapcar #'expand-file-name boxes))
   (let ((d (package-desc-dir pd))
@@ -182,7 +187,6 @@ the pre-existing package-desc"
 	  N (length pkg-dir))
     (setq files (mapcar (lambda (fn) (substring fn N))
 			(directory-files-recursively pkg-dir "")))
-    (message "Files %s" files)
     (while ls
       (setq cat (cdr (pop ls))
 	    install-files (unboxed-file-category-install-files cat)
@@ -192,8 +196,6 @@ the pre-existing package-desc"
 		  (push fn cat-files)
 		(push fn noncat-files)))
 	    files)
-      (message "Cat files %s" cat-files)
-      (message "noncat files %s" noncat-files)
       (setq files (nreverse noncat-files)
 	    noncat-files nil)
       (when install-files
@@ -215,27 +217,9 @@ the pre-existing package-desc"
     installed-by-cat))
 
 (defun unboxed--unbox-packages-in-db (db)
-  (let ((area (unboxed--sexpr-db-area db))
-	(pkgs (unboxed--sexpr-db-packages db))
-	(installed (unboxed--sexpr-db-installed db))
-	cats installed-by-cat pkgs-to-unbox ls pd)
-    (setq cats (unboxed--area-categories area)
-	  installed-by-cat (mapcar (lambda (c)
-				     `(,(unboxed-file-category-name c)))
-				   cats))
-    (setq pkgs-to-unbox (unboxed--packages-to-unbox db)
-	  ls pkgs-to-unbox)
-    (while ls
-      (setq pd (pop ls)
-	    installed-by-cat (unboxed--unbox-package db pd installed-by-cat)))
-    (setq ls cats)
-    (while ls
-      (setq cat (pop ls)
-	    finalize-install-files (unboxed-file-category-finalize-install-files cat))
-      (when finalize-install-files
-	(setq cat-installed-files (cdr (assq cat installed-by-cat))
-	      db (funcall finalize-install-files db cat-installed-files))))
-    db))
+  (unboxed--unbox-packages-in-list
+   db
+   (unboxed--packages-to-unbox db)))
 
 (defun unboxed--unbox-package-list-in-db (db pkg-ls)
   (let ((area (unboxed--sexpr-db-area db))
@@ -249,9 +233,10 @@ the pre-existing package-desc"
 	     pkgs)
     (setq cats (unboxed--area-categories area)
 	  ls cats
-	  installed-by-cat (mapcar (lambda (c-pr)
-				     `(,(unboxed-file-category-name (cdr c-pr))))
-				   cats))
+	  installed-by-cat (mapcar
+			    (lambda (c-pr)
+			      `(,(unboxed-file-category-name (cdr c-pr))))
+			    cats))
     (while ls
       (setq cat (cdr (pop ls)))
       (setq loc (unboxed-file-category-location cat))
@@ -266,12 +251,24 @@ the pre-existing package-desc"
     (while ls
       (setq cat (cdr (pop ls))
 	    cat-name (unboxed-file-category-name cat)
-	    finalize-install-files (unboxed-file-category-finalize-install-files cat))
+	    finalize-install-files (unboxed-file-category-finalize-install-files cat)
+	    cat-installed-files (cdr (assq cat-name installed-by-cat)))
+      (mapc (lambda (inst)
+	      (puthash (unboxed--installed-file-key inst)
+		       inst
+		       installed))
+	    cat-installed-files)
       (when finalize-install-files
-	(setq cat-installed-files (cdr (assq cat-name installed-by-cat))
-	      new-installed (nconc (funcall finalize-install-files db
-					    cat cat-installed-files)
-				   new-installed))))
+	(setq new-installed (funcall finalize-install-files db
+					    cat cat-installed-files))
+	(mapc (lambda (inst)
+		(puthash (unboxed--installed-file-key inst)
+			 inst
+			 installed))
+	      new-installed)))
+    (mapc (lambda (pd)
+	    (setf (unboxed-package-desc-manager pd) 'unboxed))
+	  pkgs-to-unbox)
     db))
 
 (defun unboxed--rebox-package-list-in-db (db pkg-ls)
@@ -303,7 +300,6 @@ the pre-existing package-desc"
 		    (file-name-sans-extension
 		     (file-name-nondirectory al-fn))))
 	  text)
-      (message "AL-FN: %S" al-fn)
       (unless (file-exists-p al-fn)
 	(require 'autoload)
 	(setq text (autoload-rubric al-fn nil feature)
@@ -313,7 +309,6 @@ the pre-existing package-desc"
 		    text))
 	(with-temp-buffer
 	  (insert text)
-	  (message "AL-FN: %S" al-fn)
 	  (write-region (point-min) (point-max) al-fn))))))
 
 (defun unboxed--create-sexpr-db (area-name areas)

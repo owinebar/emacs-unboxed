@@ -121,21 +121,15 @@
 	     (if (> (length logtext) 0)
 		 logtext
 	       t)))
-    (message "Log file %s" logfile)
-    (message "Program %S" program)
     (setq proc (async-start program nil))
     (setq proc-result (async-get proc))
-    (message "proc-result %S" proc-result)
-    (message "elc-name %S" elc-name)
-    (message "elc-path %S" elc-path)
     (with-temp-buffer
       (insert-file-contents logfile)
       (setq log-text (buffer-string)))
-    (message "Log text\n%s" log-text)
     (when (file-exists-p elc-path)
       (setq result log-text))
-    ;; (when (file-exists-p logfile)
-    ;;   (delete-file logfile))
+    (when (file-exists-p logfile)
+      (delete-file logfile))
     result))
 
 (defun unboxed--async-byte-compile-library (db installed-file)
@@ -201,18 +195,13 @@ a package may capture their value in an eval-when-compile form.
 	       (when log-buffer
 		 (with-current-buffer log-buffer
 		   (write-region (point-min) (point-max) logfile))))))
-    (message "Log file %s" logfile)
-    (message "Program %s" program)
     (setf (unboxed-installed-file-file elc-installed) elc-name)
+    (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
     (setq proc (async-start program nil))
     (setq proc-result (async-get proc))
-    (message "proc-result %s" proc-result)
-    (message "elc-name %s" elc-name)
-    (message "elc-path %s" elc-path)
     (with-temp-buffer
       (insert-file-contents logfile)
       (setq log-text (buffer-string)))
-    (message "Log text\\n%s" log-text)
     (when (file-exists-p elc-path)
       (setf (unboxed-installed-file-log elc-installed) log-text)
       (setq result `(,elc-installed)))
@@ -228,7 +217,6 @@ a package may capture their value in an eval-when-compile form.
 ;;; install-action returns a list of file names actually installed
 ;;; relative to the supplied location
 (defun unboxed--install-list (cname db pd files install-action)
-  (message "Installing files %s" files)
   (let ((cat (cdr (assq cname (unboxed--sexpr-db-categories db))))
 	(ls files)
 	(pkg (unboxed-package-desc-name pd))
@@ -251,7 +239,6 @@ a package may capture their value in an eval-when-compile form.
       (when installed-file
 	(setq installed-files (nconc installed-file installed-files))))
     (setq installed (nreverse installed-files))
-    (message "Installed %s" installed)
     installed))
 
 (defun unboxed--install-simple-copy (db pd cat file)
@@ -433,21 +420,21 @@ a package may capture their value in an eval-when-compile form.
 	autoloads-fn autoloads-file result ls
 	inst comp-file new-installed)
     (setq autoloads-fn (unboxed--area-autoloads-file area)
-	  autoloads-file (file-name-concat loc autoloads-fn)
+	  autoloads-file (expand-file-name (file-name-concat loc autoloads-fn))
 	  ls files)
-    (message "autoloads fn %s" autoloads-fn)
-    (message "autoloads file %s" autoloads-file)
-    (message "files %S" files)
+    (let ((al-buffer (get-file-buffer autoloads-file)))
+      (when al-buffer
+	(with-current-buffer al-buffer
+	  (set-buffer-modified-p nil))
+	(kill-buffer al-buffer)))
     (make-directory-autoloads loc autoloads-file)
     (let ((default-directory loc))
       (setq result (unboxed--async-byte-compile-file autoloads-file))
       (when (and (stringp result) (> (length result) 0))
-	(message "Compile log for %s\n%s" autoloads-file result))
+	(message "Compile log for %S\n%s" autoloads-file result))
       (while ls
 	(setq inst (pop ls))
-	(message "Installed file\n%S" inst)
 	(setq comp-file (unboxed--async-byte-compile-library db inst))
-	(message "Compiled file\n%S" comp-file)
 	(when comp-file
 	  (setq new-installed (nconc comp-file new-installed)))))
     new-installed))
