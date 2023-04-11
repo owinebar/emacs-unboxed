@@ -21,9 +21,11 @@
 		   txt))
 	(message "Text\n%S" txt)
 	txt))
-(unboxed--ensure-autoloads-file (expand-file-name "~/.emacs.d/unboxed-autoloads.el"))
 
-(
+(unboxed--ensure-autoloads-file (expand-file-name "~/.emacs.d/unboxed-autoloads.el"))
+(unboxed--ensure-autoloads-file (expand-file-name "~/.emacs.d/lisp/unboxed-autoloads.el"))
+(make-directory-autoloads "~/.emacs.d/lisp" "~/.emacs.d/lisp/unboxed-autoloads.el")
+
 (pp tmp2 (current-buffer))
 
 (let ((default-directory (file-name-concat user-emacs-directory "lisp/")))
