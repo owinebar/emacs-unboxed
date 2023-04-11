@@ -34,31 +34,34 @@ installed in the unboxed library directory. This predicate only
 recognizes files matching `*.el' in top directory of the package
 archive, and excludes `*-pkg.el' and `*-autoloads.el' files, since the
 former are not proper elisp and the latter are not useful in an
-unboxed installation." 
+unboxed installation."
+  (message "Testing for library %s" path)
   (let ((ext (file-name-extension path))
-	(base (file-name-nondirectory path))
+	(base (file-name-sans-extension (file-name-nondirectory path)))
 	(dir (file-name-directory path)))
     (and ext (string= ext "el")
 	 (not dir)
 	 (or (not (string-suffix-p "-theme" base))
 	     (memq (intern base) unboxed-theme-libraries))
-	 (not (string-suffix-p "-package" base))
+	 (not (string-suffix-p "-pkg" base))
 	 (not (string-suffix-p "-autoloads" base)))))
 
 (defun unboxed-data-library-p (path)
   "Predicate for elisp libraries contained in package data directorys
 that should be compiled there." 
+  (message "Testing for data library %s" path)
   (let ((ext (file-name-extension path))
-	(base (file-name-nondirectory path))
+	(base (file-name-sans-extension (file-name-nondirectory path)))
 	(dir (file-name-directory path)))
     (and ext (string= ext "el")
-	 (not (string-suffix-p "-package" base))
+	 (not (string-suffix-p "-pkg" base))
 	 (not (string-suffix-p "-autoloads" base)))))
 
 ;;; modules to install in the package lisp directory
 (defun unboxed-module-p (path)
   "Predicate for elisp modules contained in packages that should be
 installed in the unboxed library directory." 
+  (message "Testing for module %s" path)
   (let ((ext (file-name-extension path))
 	(base (file-name-nondirectory path))
 	(dir (file-name-directory path)))
@@ -70,6 +73,7 @@ installed in the unboxed library directory."
 installed in the unboxed theme directory. Any `*-theme.el' file whose
 feature name is not contained in unboxed-theme-libraries variable is
 classified as a theme."
+  (message "Testing for theme %s" path)
   (let ((ext (file-name-extension path))
 	(base (file-name-nondirectory path))
 	(dir (file-name-directory path)))
@@ -82,6 +86,7 @@ classified as a theme."
   "Predicate for files contained in packages that should be installed
 in the unboxed info directory. This predicate recognizes all `*.info'
 and 'dir' files as info files"
+  (message "Testing for info %s" path)
   (let ((ext (file-name-extension path)))
     (or (and ext (string= ext "info"))
 	(string= (file-name-nondirectory path) "dir"))))
@@ -91,6 +96,7 @@ and 'dir' files as info files"
   "Predicate for files contained in packages that should be installed
 in the unboxed info directory. This predicate recognizes all `*.info'
 and 'dir' files as info files"
+  (message "Testing for compiled %s" path)
   (let ((ext (file-name-extension path)))
     (and ext
 	 (or (string= ext "elc")
@@ -100,6 +106,7 @@ and 'dir' files as info files"
   "Predicate for files contained in packages that should be installed
 in the unboxed info directory. This predicate recognizes all `*.info'
 and 'dir' files as info files"
+  (message "Testing for byte-compiled %s" path)
   (let ((ext (file-name-extension path)))
     (and ext (string= ext "elc"))))
 
@@ -107,9 +114,9 @@ and 'dir' files as info files"
   "Predicate for files contained in packages that should be installed
 in the unboxed info directory. This predicate recognizes all `*.info'
 and 'dir' files as info files"
+  (message "Testing for native-compiled %s" path)
   (let ((ext (file-name-extension path)))
     (and ext (string= ext "eln"))))
-
 
 ;;; Anything else
 (defun unboxed-data-p (path)
@@ -117,6 +124,7 @@ and 'dir' files as info files"
 in the unboxed data directory for the package,
 `<unboxed-data-directory>/<package-name>'.  This predicate is expected
 to be executed last and just returns true."
+  (message "Testing for data %s" path)
   t)
 
 (defun unboxed--function-or-nil (val)

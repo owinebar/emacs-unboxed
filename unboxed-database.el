@@ -38,9 +38,11 @@
 	    result (seq-filter (lambda (p) (string-prefix-p p d)) boxes)))
     result))
 
-(defun unboxed--init-package-desc (mgr pd)
-  "Initialize an unboxed package descriptor from the manager field and a pre-existing package-desc"
-  (let ((s (unboxed-package-desc-create :manager 'package))
+(defun unboxed--init-package-desc (mgr pd version)
+  "Initialize an unboxed package descriptor extending
+the pre-existing package-desc"
+  (let ((s (unboxed-package-desc-create :manager 'package
+					:version-string version))
 	n)
     (setq n (length pd))
     (if (recordp s)
@@ -167,6 +169,7 @@
     (reverse unboxed-pkgs)))
 
 (defun unboxed--unbox-package (db pd installed-by-cat)
+  (message "Unboxing %s" pd) 
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
@@ -179,20 +182,24 @@
 	  N (length pkg-dir))
     (setq files (mapcar (lambda (fn) (substring fn N))
 			(directory-files-recursively pkg-dir "")))
+    (message "Files %s" files)
     (while ls
-      (setq cat (pop ls)
+      (setq cat (cdr (pop ls))
 	    install-files (unboxed-file-category-install-files cat)
-	    cat-pred (unboxed-file-category-pred cat))
+	    cat-pred (unboxed-file-category-predicate cat))
       (mapc (lambda (fn)
-	      (if (funcall pred fn)
+	      (if (funcall cat-pred fn)
 		  (push fn cat-files)
 		(push fn noncat-files)))
 	    files)
+      (message "Cat files %s" cat-files)
+      (message "noncat files %s" noncat-files)
       (setq files (nreverse noncat-files)
-	    noncat-files nil
-	    all-installed (cons (install-files db pd cat-files)
-				 all-installed)
-	    cat-files nil))
+	    noncat-files nil)
+      (when install-files
+	(setq all-installed (cons (funcall install-files db pd cat-files)
+				  all-installed)))
+      (setq cat-files nil))
     (setq ls all-installed)
     (while all-installed
       (setq ls (pop all-installed))
@@ -236,6 +243,10 @@
 	(installed (unboxed--sexpr-db-installed db))
 	cats installed-by-cat pkgs-to-unbox ls pd
 	cat-name new-installed cat loc)
+    (maphash (lambda (key value)
+	       (when (memq key pkg-ls)
+		 (push value pkgs-to-unbox)))
+	     pkgs)
     (setq cats (unboxed--area-categories area)
 	  ls cats
 	  installed-by-cat (mapcar (lambda (c-pr)
@@ -247,8 +258,7 @@
       (when (stringp loc)
 	(unless (file-accessible-directory-p loc)
 	  (make-directory loc t))))
-    (setq pkgs-to-unbox (unboxed--packages-to-unbox db)
-	  ls pkgs-to-unbox)
+    (setq ls pkgs-to-unbox)
     (while ls
       (setq pd (pop ls)
 	    installed-by-cat (unboxed--unbox-package db pd installed-by-cat)))
@@ -287,21 +297,57 @@
 	    db (funcall finalize-remove-files db cat cat-files)))
     db))
 
+(defun unboxed--ensure-autoloads-file (al-fn)
+  (when (file-writable-p al-fn)
+    (let ((feature (intern
+		    (file-name-sans-extension
+		     (file-name-nondirectory al-fn))))
+	  text)
+      (message "AL-FN: %S" al-fn)
+      (unless (file-exists-p al-fn)
+	(require 'autoload)
+	(setq text (autoload-rubric al-fn nil feature)
+	      text (replace-regexp-in-string
+		    "^;+[[:space:]]*no-byte-compile:[[:space:]]+t[[:space:]]*\n"
+		    ""
+		    text))
+	(with-temp-buffer
+	  (insert text)
+	  (message "AL-FN: %S" al-fn)
+	  (write-region (point-min) (point-max) al-fn))))))
+
 (defun unboxed--create-sexpr-db (area-name areas)
   "Create an unboxed db in the sexpr format - initialize from package-desc
 table assuming no packages have been unboxed"
-  (let (area box-paths pkgs inst)
+  (let (area box-paths pkgs inst autoloads library-loc cats lib-cat al-fn)
     ;; Only record areas in scope
     ;; E.G. site package database should not contain references to user database file
     ;;     of site administrators
     (setq areas (unboxed--scoped-areas area-name areas))
     (setq area (cdar areas))
+    (setq cats (unboxed--area-categories area))
+    (setq lib-cat (cdr (assq 'library cats)))
+    (setq library-loc (unboxed-file-category-location lib-cat))
+    (setq al-fn (file-name-concat library-loc
+				  (unboxed--area-autoloads-file area)))
+    (unboxed--ensure-autoloads-file (expand-file-name al-fn))
     (setq box-paths (mapcar #'expand-file-name (unboxed--area-boxes area)))
     (setq pkgs (make-hash-table :test #'eq))
     (mapc (lambda (pd-pr)
 	    (let ((pd (cadr pd-pr))
+		  (version "")
+		  pkg pkg-dir pkg-prefix
 		  upd)
-	      (setq upd (unboxed--init-package-desc 'package pd))
+	      (setq pkg-dir (package-desc-dir pd))
+	      (setq pkg (package-desc-name pd))
+	      (setq pkg-prefix (concat (symbol-name pkg) "-"))
+	      (when (stringp pkg-dir)
+		(when (directory-name-p pkg-dir)
+		  (setq pkg-dir (directory-file-name pkg-dir)))
+		(setq pkg-dir (file-name-nondirectory pkg-dir))
+		(when (string-prefix-p pkg-prefix pkg-dir)
+		  (setq version (substring pkg-dir (length pkg-prefix)))))
+	      (setq upd (unboxed--init-package-desc 'package pd version))
 	      (puthash (unboxed-package-desc-name upd) upd pkgs)))
 	  (seq-filter
 	   (lambda (pr)

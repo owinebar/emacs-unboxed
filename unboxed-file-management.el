@@ -68,6 +68,13 @@
     (setf (unboxed-installed-file-log installed-file) log-text)))
 
 (defun unboxed--make-install-logfile (base pkg-name &optional filename)
+  (unless unboxed-temp-directory
+    (setq unboxed-temp-directory (file-name-concat user-emacs-directory
+						   "tmp")))
+  (setq unboxed-temp-directory
+	(file-name-as-directory unboxed-temp-directory))
+  (unless (file-accessible-directory-p unboxed-temp-directory)
+    (make-directory unboxed-temp-directory t))
   (let ((logfile-base (concat base
 			      "-"
 			      (symbol-name pkg-name)
@@ -78,7 +85,59 @@
 			      "-"))
 	(temporary-file-directory unboxed-temp-directory))
     (make-temp-file logfile-base)))
-  
+
+(defun unboxed--async-byte-compile-file (file)
+  "Function to byte compile an elisp file"
+  (let ((el-name (file-name-nondirectory file))
+	logfile-base 
+	logfile
+	log-text
+	elc-name
+	elc-path
+	result
+	proc
+	proc-result)
+    (setq logfile-base (file-name-sans-extension el-name)
+	  logfile (let ((temporary-file-directory unboxed-temp-directory))
+		    (make-temp-file 
+		     (concat "compile-log--" logfile-base "-")))
+	  el-path (expand-file-name el-name)
+	  elc-path  (if (string= (file-name-extension el-path) "el")
+			(concat el-path "c")
+		      (concat el-path ".elc"))
+	  program
+	  `(lambda ()
+	     (require 'bytecomp)
+	     (setq load-path ',load-path)
+	     (defvar logtext nil)
+	     (when (file-exists-p ,elc-path)
+	       (delete-file ,elc-path))
+	     (byte-compile-file ,el-path)
+	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
+	       (when log-buffer
+		 (with-current-buffer log-buffer
+		   (setq logtext (buffer-string))
+		   (write-region (point-min) (point-max) ,logfile))))
+	     (if (> (length logtext) 0)
+		 logtext
+	       t)))
+    (message "Log file %s" logfile)
+    (message "Program %S" program)
+    (setq proc (async-start program nil))
+    (setq proc-result (async-get proc))
+    (message "proc-result %S" proc-result)
+    (message "elc-name %S" elc-name)
+    (message "elc-path %S" elc-path)
+    (with-temp-buffer
+      (insert-file-contents logfile)
+      (setq log-text (buffer-string)))
+    (message "Log text\n%s" log-text)
+    (when (file-exists-p elc-path)
+      (setq result log-text))
+    ;; (when (file-exists-p logfile)
+    ;;   (delete-file logfile))
+    result))
+
 (defun unboxed--async-byte-compile-library (db installed-file)
   "Function to byte compile an unboxed elisp library from a package.
 This function defines the following global symbols during compile, so
@@ -99,7 +158,7 @@ a package may capture their value in an eval-when-compile form.
   (let ((area (unboxed--sexpr-db-area db))
 	(cats (unboxed--sexpr-db-categories db))
 	(pkg-name (unboxed-installed-file-package installed-file))
-	(pkg-version (unboxed-installed-file-package-version installed-file))
+	(pkg-version (unboxed-installed-file-package-version-string installed-file))
 	(pkg-loc (unboxed-installed-file-package-location installed-file))
 	(cat (unboxed-installed-file-category installed-file))
 	(cat-loc (unboxed-installed-file-category-location installed-file))
@@ -110,7 +169,8 @@ a package may capture their value in an eval-when-compile form.
 	(infodir (unboxed--sexpr-db-category-location db 'info))
 	(datadir (unboxed--sexpr-db-category-location db 'data))
 	(elc-installed (unboxed-installed-file-struct-copy installed-file))
-	logfile-base logfile log-text el-name elc-name elc-path result)
+	logfile-base logfile log-text el-name elc-name elc-path result
+	proc proc-result)
     (setq logfile (unboxed--make-install-logfile "compile-log" pkg-name lib)
 	  datadir (file-name-concat datadir (symbol-name pkg-name))
 	  el-name lib
@@ -118,40 +178,47 @@ a package may capture their value in an eval-when-compile form.
 			(concat el-name "c")
 		      (concat el-name ".elc"))
 	  el-path (file-name-concat cat-loc el-name)
-	  elc-path (file-name-concat cat-loc elc-name))
+	  elc-path (file-name-concat cat-loc elc-name)
+	  program
+	  `(lambda ()
+	     (require 'bytecomp)
+	     (setq load-path ',load-path)
+	     (setq unboxed-package ',pkg-name)
+	     (setq unboxed-package-version ,pkg-version)
+	     (setq unboxed-package-box ,pkg-loc)
+	     (setq unboxed-library-directory ,libdir)
+	     (setq unboxed-theme-directory ,themedir)
+	     (setq unboxed-info-directory ,infodir)
+	     (setq unboxed-package-data-directory ,datadir)
+	     (setq elc-name ,elc-name)
+	     (setq cat-loc ,cat-loc)
+	     (setq el-path ,el-path)
+	     (setq elc-path ,elc-path)
+	     (when (file-exists-p elc-path)
+	       (delete-file elc-path))
+	     (byte-compile-file el-path)
+	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
+	       (when log-buffer
+		 (with-current-buffer log-buffer
+		   (write-region (point-min) (point-max) logfile))))))
+    (message "Log file %s" logfile)
+    (message "Program %s" program)
     (setf (unboxed-installed-file-file elc-installed) elc-name)
-    (async-start
-     `(lambda ()
-	(require 'bytecomp)
-	(setq load-path ',load-path)
-	(setq unboxed-package ',pkg-name)
-	(setq unboxed-package-version ,pkg-version)
-	(setq unboxed-package-box ,pkg-loc)
-	(setq unboxed-library-directory ,libdir)
-	(setq unboxed-theme-directory ,themedir)
-	(setq unboxed-info-directory ,infodir)
-	(setq unboxed-package-data-directory ,datadir)
-	(setq elc-name ,elc-name)
-	(setq cat-loc ,cat-loc)
-	(setq el-path ,el-path)
-	(setq elc-path ,elc-path)
-	(when (file-exists-p elc-path)
-	  (delete-file elc-path))
-	(byte-compile-file el-path)
-	(let ((log-buffer (get-buffer byte-compile-log-buffer)))
-	  (when log-buffer
-	    (with-current-buffer log-buffer
-	      (write-region (point-min) (point-max) logfile)))))
-     (lambda (&optional dummy)
-       (when (file-exists-p elc-name)
-	 (with-temp-buffer
-	   (insert-file-contents logfile)
-	   (setq log-text (buffer-string)))
-	 (setf (unboxed-installed-file-log elc-installed) log-text)
-	 (setq result `(,elc-installed)))
-       (when (file-exists-p logfile)
-	 (delete-file logfile))
-       result))))
+    (setq proc (async-start program nil))
+    (setq proc-result (async-get proc))
+    (message "proc-result %s" proc-result)
+    (message "elc-name %s" elc-name)
+    (message "elc-path %s" elc-path)
+    (with-temp-buffer
+      (insert-file-contents logfile)
+      (setq log-text (buffer-string)))
+    (message "Log text\\n%s" log-text)
+    (when (file-exists-p elc-path)
+      (setf (unboxed-installed-file-log elc-installed) log-text)
+      (setq result `(,elc-installed)))
+    (when (file-exists-p logfile)
+      (delete-file logfile))
+    result))
 
 ;;; install-action must take four arguments -
 ;;;  the package name as a symbol
@@ -160,46 +227,77 @@ a package may capture their value in an eval-when-compile form.
 ;;;  the location for installed files
 ;;; install-action returns a list of file names actually installed
 ;;; relative to the supplied location
-(defun unboxed--install-list (area cat pd files install-action)
-  (let ((ls files)
-	(cat-loc (unboxed-file-category-location cat))
-	(cname (unboxed-file-category-name cat))
+(defun unboxed--install-list (cname db pd files install-action)
+  (message "Installing files %s" files)
+  (let ((cat (cdr (assq cname (unboxed--sexpr-db-categories db))))
+	(ls files)
 	(pkg (unboxed-package-desc-name pd))
 	(pkg-loc (unboxed-package-desc-dir pd))
+	cat-loc
 	installed
 	file
 	installed-files
 	installed-file)
+    (setq cat-loc (unboxed-file-category-location cat))
     (while ls
       (setq file (pop ls))
       (setq basename (file-name-nondirectory file)
-	    relpath (file-name-directory file))
-      (setq installed-files
-	    (funcall install-action
-		     (file-name-concat pkg-loc file)
-		     cat-loc))
-      (while installed-files
-	(setq installed-file (pop installed-files))
-	(push (unboxed-installed-file-create :package pkg
-					     :category cname
-					     :file installed-file
-					     :package-source file)
-	      installed)))
+	    relpath (file-name-directory file)
+	    installed-file (funcall install-action
+				     db
+				     pd
+				     cat
+				     file))
+      (when installed-file
+	(setq installed-files (nconc installed-file installed-files))))
+    (setq installed (nreverse installed-files))
+    (message "Installed %s" installed)
     installed))
 
-(defun unboxed--install-simple-copy (area pkg cat file src-loc dst-loc)
-  (let ((dest (file-name-concat dst-loc (file-name-non-directory file)))
-	(src (file-name-concat src-loc file)))
+(defun unboxed--install-simple-copy (db pd cat file)
+  (let ((version (unboxed-package-desc-version-string pd))
+	(pkg (unboxed-package-desc-name pd))
+	(cname (unboxed-file-category-name cat))
+	(dst-loc (unboxed-file-category-location cat))
+	(src-loc (unboxed-package-desc-dir pd))
+	inst dest src dst-file)
+    (setq dst-file (file-name-nondirectory file)
+	  dest (file-name-concat dst-loc dst-file)
+	  src (file-name-concat src-loc file))
     (copy-file src dest t)
-    `(,dest)))
+    (setq inst
+	  (unboxed-installed-file-create :package pkg
+					 :package-version-string version
+					 :package-location src-loc
+					 :category cname
+					 :category-location dst-loc
+					 :file dst-file
+					 :package-source file))
+    `(,inst)))
 
-(defun unboxed--install-pkg-relative-copy (area pkg cat file src-loc dst-loc)
-  (let ((dest (file-name-concat dst-loc pkg file))
-	(src (file-name-concat src-loc file)))
+(defun unboxed--install-pkg-relative-copy (db pd cat file)
+  (let ((version (unboxed-package-desc-version-string pd))
+	(pkg (unboxed-package-desc-name pd))
+	(cname (unboxed-file-category-name cat))
+	(dst-loc (unboxed-file-category-location cat))
+	(src-loc (unboxed-package-desc-dir pd))
+	inst dest src dst-file)
+    (setq dst-file (file-name-concat (symbol-name pkg)
+				     file)
+	  dest (file-name-concat dst-loc dst-file)
+	  src (file-name-concat src-loc file))
     (when (> (length (file-name-nondirectory file)) 0)
       (make-directory (file-name-directory dest) t))
     (copy-file src dest t)
-    `(,dest)))
+    (setq inst
+	  (unboxed-installed-file-create :package pkg
+					 :package-version-string version
+					 :package-location src-loc
+					 :category cname
+					 :category-location dst-loc
+					 :file dst-file
+					 :package-source file))
+    `(,inst)))
 
 
 ;;; "files" here are installed-file structs
@@ -252,33 +350,35 @@ a package may capture their value in an eval-when-compile form.
 ;;; These installers are used for lists of files of a particular
 ;;; category for a specific package
 ;;; file names are given as relative paths to the package directory
-(defun unboxed-install-theme (area pd files)
-  (unboxed--install-list 'theme area pd #'unboxed--install-simple-copy))
+(defun unboxed-install-theme (db pd files)
+  (unboxed--install-list 'theme db pd files #'unboxed--install-simple-copy))
   
-(defun unboxed-install-library (area pd files)
-  (unboxed--install-list 'library area pd #'unboxed--install-simple-copy))
+(defun unboxed-install-library (db pd files)
+  (unboxed--install-list 'library db pd files #'unboxed--install-simple-copy))
 
-(defun unboxed-install-module (area pd files)
-  (unboxed--install-list 'module area pd #'unboxed--install-simple-copy))
+(defun unboxed-install-module (db pd files)
+  (unboxed--install-list 'module db pd files #'unboxed--install-simple-copy))
 
-(defun unboxed-install-info (area pd files)
-  (unboxed--install-list 'info area pd files #'unboxed--install-simple-copy))
+(defun unboxed-install-info (db pd files)
+  (unboxed--install-list 'info db pd files #'unboxed--install-simple-copy))
 
-(defun unboxed-install-byte-compiled (area pd files)
-  nil)
-(defun unboxed-install-native-compiled (area pd files)
+(defun unboxed-install-byte-compiled (db pd files)
   nil)
 
-(defun unboxed-install-data (area pd files)
-  (let ((loc (unboxed-file-category-location
+(defun unboxed-install-native-compiled (db pd files)
+  nil)
+
+(defun unboxed-install-data (db pd files)
+  (let ((area (unboxed--sexpr-db-area db))
+	(loc (unboxed-file-category-location
 	      (cdr (assoc 'data
-			  (unboxed--area-categories area)))))
+			  (unboxed--sexpr-db-categories db)))))
 	(pkg (unboxed-package-desc-name pd))
 	pkg-dir libs installed elcs)
-    (setq pkg-dir (file-name-concat loc pkg))
+    (setq pkg-dir (file-name-concat loc (symbol-name pkg)))
     (make-directory pkg-dir t)
     (setq installed (unboxed--install-list
-		     'data area files
+		     'data db pd files
 		     #'unboxed--install-pkg-relative-copy)
 	  libs (seq-filter
 		(lambda (inst)
@@ -292,9 +392,6 @@ a package may capture their value in an eval-when-compile form.
     (nconc installed (nreverse elcs))))
 
 
-(defun unboxed-install-theme (area pd files)
-  (unboxed--install-list area pd files #'unboxed--install-simple-copy))
-
 ;;; These removers are used for lists of installed files
 (defun unboxed-remove-theme (area files)
   (unboxed--remove-list area files #'unboxed--remove-simple-delete))
@@ -304,6 +401,7 @@ a package may capture their value in an eval-when-compile form.
 
 (defun unboxed-remove-byte-compiled (area pd files)
   nil)
+
 (defun unboxed-remove-native-compiled (area pd files)
   nil)
 
@@ -332,22 +430,31 @@ a package may capture their value in an eval-when-compile form.
 (defun unboxed-finalize-install-library (db cat files)
   (let ((loc (unboxed-file-category-location cat))
 	(area (unboxed--sexpr-db-area db))
-	autoloads-fn autoloads-file ls inst comp-file new-installed)
+	autoloads-fn autoloads-file result ls
+	inst comp-file new-installed)
     (setq autoloads-fn (unboxed--area-autoloads-file area)
 	  autoloads-file (file-name-concat loc autoloads-fn)
 	  ls files)
     (message "autoloads fn %s" autoloads-fn)
     (message "autoloads file %s" autoloads-file)
+    (message "files %S" files)
     (make-directory-autoloads loc autoloads-file)
-    (while ls
-      (setq inst (pop ls)
-	    comp-file (unboxed--async-byte-compile-library db installed-file))
-      (when comp-file
-	(setq new-installed (nconc comp-file new-installed))))
+    (let ((default-directory loc))
+      (setq result (unboxed--async-byte-compile-file autoloads-file))
+      (when (and (stringp result) (> (length result) 0))
+	(message "Compile log for %s\n%s" autoloads-file result))
+      (while ls
+	(setq inst (pop ls))
+	(message "Installed file\n%S" inst)
+	(setq comp-file (unboxed--async-byte-compile-library db inst))
+	(message "Compiled file\n%S" comp-file)
+	(when comp-file
+	  (setq new-installed (nconc comp-file new-installed)))))
     new-installed))
 
 (defun unboxed-finalize-install-byte-compiled (area cat files)
   nil)
+
 (defun unboxed-finalize-install-native-compiled (area cat files)
   nil)
 
