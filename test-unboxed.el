@@ -32,7 +32,6 @@
   (setq bc-result (unboxed--async-byte-compile-file "async.el")))
 
 
-(pp tmp-user-db (current-buffer))
 
 
 (unboxed-library-p "async.el")
@@ -46,5 +45,58 @@
 
 (pp bc-result (current-buffer))
 (("/home/owinebar/.emacs.d/lisp/async.elc" "/home/owinebar/.emacs.d/tmp/compile-log--async-lMM1WV" ""))
+
+(unboxed--file-grep "load-file-name" (expand-file-name "test/files/should-rewrite.el"))
+(unboxed--file-grep "load-file-name" (expand-file-name "test/files/should-not-rewrite.el"))
+
+
+(defun sexpr-start ()
+  (save-excursion
+    (save-restriction
+      (narrow-to-region (point) (point-max))
+      (forward-sexp)
+      (backward-sexp)
+      (point))))
+
+''foo					
+'(foo)
+,@foo
+,foo
+\,
+
+'(quote \' \` \, \,@)
+
+(pp (symbol-function 'unboxed--pcase-replace-sexpr-p) (current-buffer))
+
+(pp (symbol-plist 'unboxed-user-data-directory-patterns) (current-buffer))
+
+(makunbound 'unboxed-user-data-directory-patterns)
+(pp unboxed-user-data-directory-patterns (current-buffer))
+
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "test/files/should-rewrite.el")
+ (expand-file-name "test/files/should-rewrite-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
+
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "test/files/should-not-rewrite.el")
+ (expand-file-name "test/files/should-not-rewrite-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
+
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "test/files/should-rewrite2.el")
+ (expand-file-name "test/files/should-rewrite2-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
+
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "test/files/should-rewrite3.el")
+ (expand-file-name "test/files/should-rewrite3-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
+
+(pp tmp-user-db (current-buffer))
+
+
+(pp package-alist (current-buffer))
+
 
 

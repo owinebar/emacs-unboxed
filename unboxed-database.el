@@ -222,6 +222,13 @@ the pre-existing package-desc"
    (unboxed--packages-to-unbox db)))
 
 (defun unboxed--unbox-package-list-in-db (db pkg-ls)
+  (unless unboxed-temp-directory
+    (setq unboxed-temp-directory (file-name-concat user-emacs-directory
+						   "tmp")))
+  (setq unboxed-temp-directory
+	(file-name-as-directory unboxed-temp-directory))
+  (unless (file-accessible-directory-p unboxed-temp-directory)
+    (make-directory unboxed-temp-directory t))
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
@@ -314,7 +321,7 @@ the pre-existing package-desc"
 (defun unboxed--create-sexpr-db (area-name areas)
   "Create an unboxed db in the sexpr format - initialize from package-desc
 table assuming no packages have been unboxed"
-  (let (area box-paths pkgs inst autoloads library-loc cats lib-cat al-fn)
+  (let (area box-paths boxed-pkgs pkgs inst autoloads library-loc cats lib-cat al-fn)
     ;; Only record areas in scope
     ;; E.G. site package database should not contain references to user database file
     ;;     of site administrators
@@ -328,6 +335,16 @@ table assuming no packages have been unboxed"
     (unboxed--ensure-autoloads-file (expand-file-name al-fn))
     (setq box-paths (mapcar #'expand-file-name (unboxed--area-boxes area)))
     (setq pkgs (make-hash-table :test #'eq))
+    (message "Box Paths: %S" box-paths)
+    (setq boxed-pkgs
+	  (seq-filter
+	   (lambda (pr)
+	     (let ((pd (cadr pr))
+		   paths)
+	       (setq paths (unboxed--package-in-boxes pd box-paths))
+	       (and paths pr)))
+	   package-alist))
+    (message "area packages %S" (length boxed-pkgs))
     (mapc (lambda (pd-pr)
 	    (let ((pd (cadr pd-pr))
 		  (version "")
@@ -343,14 +360,10 @@ table assuming no packages have been unboxed"
 		(when (string-prefix-p pkg-prefix pkg-dir)
 		  (setq version (substring pkg-dir (length pkg-prefix)))))
 	      (setq upd (unboxed--init-package-desc 'package pd version))
+	      (setf (unboxed-package-desc-simple upd)
+		    (unboxed-package-simple-p pd))
 	      (puthash (unboxed-package-desc-name upd) upd pkgs)))
-	  (seq-filter
-	   (lambda (pr)
-	     (let ((pd (cadr pr))
-		   paths)
-	       (setq paths (unboxed--package-in-boxes pd box-paths))
-	       (and paths pr)))
-	   package-alist))
+	  boxed-pkgs)
     ;; these record installed files managed by unboxed, so they start out empty
     (setq inst (make-hash-table :test #'equal))
     (unboxed--sexpr-db-create

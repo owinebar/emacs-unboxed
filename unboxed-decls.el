@@ -91,6 +91,10 @@ or site packages
   (unboxed--area-db-path
    (unboxed--sexpr-db-area db)))
 
+(defun unboxed--sexpr-db-datadir-patterns (db)
+  (unboxed--area-datadir-patterns
+   (unboxed--sexpr-db-area db)))
+
 (defun unboxed--sexpr-db-categories (db)
   (unboxed--area-categories
    (unboxed--sexpr-db-area db)))
@@ -189,8 +193,10 @@ from a file.
   "Package desc structure extended with fields recording its
 installation manager 
   Slots:
+  `simple' boolean which is t if the package directory has no subdirectories
   `version-string' version string for this package
   `manager' name of installation manager for this package."
+  simple
   version-string
   manager)
 
@@ -290,7 +296,7 @@ installation manager
 	(pred (unboxed--resolve-conf-func pred-conf))
 	(excluded (unboxed--resolve-conf-val excluded-conf))
 	(theme-libs (unboxed--resolve-conf-val theme-libs-conf))
-	(datadir (unboxed--resolve-conf-val datadir-conf))
+	;(datadir (unboxed--resolve-conf-val datadir-conf))
 	(patches (unboxed--resolve-conf-val patches-conf))
 	(autoloads-fn (unboxed--resolve-conf-val autoloads-conf))
 	excluded-regex)
@@ -302,7 +308,8 @@ installation manager
      :excluded excluded
      :excluded-regex (unboxed--excluded-package-regex excluded)
      :theme-libraries theme-libs
-     :datadir-pats datadir
+     ;; this should be a variable name
+     :datadir-pats datadir-conf
      :patches patches
      :autoloads-file autoloads-fn
      :categories cats)))
