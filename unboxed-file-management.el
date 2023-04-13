@@ -201,7 +201,7 @@ a package may capture their value in an eval-when-compile form.
 	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
 	       (when log-buffer
 		 (with-current-buffer log-buffer
-		   (write-region (point-min) (point-max) logfile))))))
+		   (write-region (point-min) (point-max) ,logfile))))))
     (setf (unboxed-installed-file-file elc-installed) elc-name)
     (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
     (setq proc (async-start program nil))
@@ -294,9 +294,7 @@ a package may capture their value in an eval-when-compile form.
      #'unboxed--simple-copy)))
 
 (defun unboxed--install-simple-copy (db pd cat file)
-  (unboxed--install-copy db pd cat file
-			 (lambda (src dest)
-			   (copy-file src dest t))))
+  (unboxed--install-copy db pd cat file #'unboxed--simple-copy))
 
 (defun unboxed--install-pkg-relative-copy (db pd cat file)
   (let ((version (unboxed-package-desc-version-string pd))

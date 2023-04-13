@@ -10,6 +10,8 @@
 (setq tmp-user-db (cdr (assq 'user tmp)))
 
 (setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(async)))
+(setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(yasnippet yasnippet-classic-snippets)))
+(setq tmp3 (unboxed--unbox-package-list-in-db tmp-user-db (mapcar #'car package-alist)))
 
 (setq tmp-txt
       (let* ((al-fn (expand-file-name "~/.emacs.d/unboxed-autoloads.el"))
@@ -44,7 +46,6 @@
 (unboxed-data-library-p "foo/async.el")
 
 (pp bc-result (current-buffer))
-(("/home/owinebar/.emacs.d/lisp/async.elc" "/home/owinebar/.emacs.d/tmp/compile-log--async-lMM1WV" ""))
 
 (unboxed--file-grep "load-file-name" (expand-file-name "test/files/should-rewrite.el"))
 (unboxed--file-grep "load-file-name" (expand-file-name "test/files/should-not-rewrite.el"))
@@ -93,9 +94,18 @@
  (expand-file-name "test/files/should-rewrite3-rewritten.el")
  (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
 
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "/home/owinebar/.config/emacs/elpa-28/yasnippet-20200604.246/yasnippet.el")
+ (expand-file-name "test/files/yasnippet-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
+
 (pp tmp-user-db (current-buffer))
 
+(setq yasnippet-pd (cadr (assq 'yasnippet package-alist)))
 
+
+;(require 'package)
+;(package-initialize)
 (pp package-alist (current-buffer))
 
 

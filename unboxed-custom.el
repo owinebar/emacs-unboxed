@@ -48,7 +48,7 @@
 will be stored" 
   :type 'directory
   :group 'unboxed-user)
-(defcustom unboxed-user-area-pred #'unboxed-package-any-p
+(defcustom unboxed-user-area-pred nil ;#'unboxed-package-any-p
   "Predicate for determining whether a user package should be unboxed."
   :type '(choice :tag "Predicate" function nil)
   :group 'unboxed-user)
@@ -58,7 +58,7 @@ will be stored"
 will be stored" 
   :type 'directory
   :group 'unboxed-site)
-(defcustom unboxed-site-area-pred #'unboxed-package-any-p
+(defcustom unboxed-site-area-pred nil ;#'unboxed-package-any-p
   "Predicate for determining whether a site package should be unboxed."
   :type '(choice :tag "Predicate" function nil)
   :group 'unboxed-site)

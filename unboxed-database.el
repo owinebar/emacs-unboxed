@@ -105,37 +105,6 @@ the pre-existing package-desc"
   areas)
 
 
-(defun unboxed-package-single-p (pd)
-  (let ((d (package-desc-dir pd))
-	(name (symbol-name (package-desc-name pd)))
-	all main auto pkg r)
-    (when (and d (file-accessible-directory-p d))
-      (setq all (directory-files d nil "^[^.].*$")
-	    main (directory-files d nil (concat "^[^.]" (regexp-quote name) "\\.elc?$"))
-	    auto (directory-files d nil "^[^.].*-autoloads?\\.elc?$")
-	    pkg (directory-files d nil "^[^.].*-pkg\\.elc?$"))
-      (when (= (length all) (+ (length main) (length auto) (length pkg)))
-	(setq r t)))
-    r))
-
-
-(defun unboxed-package-simple-p (pd)
-  (let ((d (package-desc-dir pd))
-	(name (symbol-name (package-desc-name pd)))
-	(no-subdirs t)
-	all fn)
-    (setq all (directory-files d t "^[^.].*$"))
-    (while (and no-subdirs all)
-      (setq fn (pop all)
-	    no-subdirs (file-directory-p fn)))
-    no-subdirs))
-
-(defun unboxed-package-any-p (pd)
-  t)
-
-(defun unboxed-package-none-p (pd)
-  nil)
-
 (defun unboxed--excluded-package-regex (ls)
   (let (re-ls syms re e)
     (while ls
@@ -360,6 +329,8 @@ table assuming no packages have been unboxed"
 		(when (string-prefix-p pkg-prefix pkg-dir)
 		  (setq version (substring pkg-dir (length pkg-prefix)))))
 	      (setq upd (unboxed--init-package-desc 'package pd version))
+	      (setf (unboxed-package-desc-single upd)
+		    (unboxed-package-single-p pd))
 	      (setf (unboxed-package-desc-simple upd)
 		    (unboxed-package-simple-p pd))
 	      (puthash (unboxed-package-desc-name upd) upd pkgs)))

@@ -92,7 +92,7 @@ or site packages
    (unboxed--sexpr-db-area db)))
 
 (defun unboxed--sexpr-db-datadir-patterns (db)
-  (unboxed--area-datadir-patterns
+  (unboxed--area-datadir-pats
    (unboxed--sexpr-db-area db)))
 
 (defun unboxed--sexpr-db-categories (db)
@@ -193,12 +193,46 @@ from a file.
   "Package desc structure extended with fields recording its
 installation manager 
   Slots:
+  `single' boolean which is t if the package is for a single library file
   `simple' boolean which is t if the package directory has no subdirectories
   `version-string' version string for this package
   `manager' name of installation manager for this package."
+  single
   simple
   version-string
   manager)
+
+(defun unboxed-package-single-p (pd)
+  (let ((d (package-desc-dir pd))
+	(name (symbol-name (package-desc-name pd)))
+	all main auto pkg r)
+    (when (and d (file-accessible-directory-p d))
+      (setq all (directory-files d nil "^[^.].*$")
+	    main (directory-files d nil (concat "^" (regexp-quote name) "\\.elc?$"))
+	    auto (directory-files d nil (concat "^" (regexp-quote name) "-autoloads\\.elc?$"))
+	    pkg (directory-files d nil (concat "^" (regexp-quote name) "-pkg\\.elc?$")))
+      (when (= (length all) (+ (length main) (length auto) (length pkg)))
+	(setq r t)))
+    r))
+
+
+(defun unboxed-package-simple-p (pd)
+  (let ((d (package-desc-dir pd))
+	(name (symbol-name (package-desc-name pd)))
+	(no-subdirs t)
+	all fn)
+    (setq all (directory-files d t "^[^.].*$"))
+    (while (and no-subdirs all)
+      (setq fn (pop all)
+	    no-subdirs (not (file-directory-p fn))))
+    no-subdirs))
+
+(defun unboxed-package-any-p (pd)
+  t)
+
+(defun unboxed-package-none-p (pd)
+  nil)
+
 
 (defconst unboxed--file-category-customization-type
   `(list (symbol :tag "Name")
