@@ -1,4 +1,4 @@
-;;; unboxed-rewrite-sexprs.el   -*- lexical-binding: t; -*-
+;;; unboxed-rewrite-sexprs.el --- routines for rewriting sexps in source code   -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
@@ -34,8 +34,8 @@
 
 
 (defun unboxed--next-sexpr-start ()
-  "Find the start of the *next* sexpr, which may begin at point but no
-earlier"
+  "Find the start of the *next* sexpr, which may begin at point but no \
+earlier."
   (save-excursion
     (save-restriction
       (narrow-to-region (point) (point-max))
@@ -44,7 +44,8 @@ earlier"
       (point))))
 
 (defun unboxed--this-sexpr-start (&optional min-start)
-  "Find the start of the sexpr which point follows or is in"
+  "Find the start of the sexpr which point follows or is in, \
+subject to lower bound of MIN-START."
   (save-excursion
     (save-restriction
       (when min-start
@@ -56,11 +57,15 @@ earlier"
 
 ;; assumes parse-sexp-ignore-comments is t
 (defun unboxed--back-sexpr (v p0 &optional p2)
+  "Go back one sexpr corresponding to V.
+P0 is the end of the previous sexpr.
+P2 is a position either at the end of the current sexpr on inside it.\
+  Default value is point."
   (unless p2
     (setq p2 (point)))
   (let (p1)
     ;; check for named unicode character that is not handled well by
-    ;; emacs-lisp-mode (forward-sexp -1) 
+    ;; emacs-lisp-mode (forward-sexp -1)
     (when (and (char-or-string-p v)
 	       (not (stringp v))
 	       (eq (preceding-char) ?\}))
@@ -95,9 +100,10 @@ earlier"
     p1))
        
 (defun unboxed--replace-text-in-region (start end new)
-  "Utility function for replacing region with specified SEXP.
-If point is inside the region, it will be at the end of the region
-following the replacement" 
+  "Replace text in region bounded by START and END with read \
+syntax representing Lisp object NEW.
+If point is inside the region, it will be at the end of the region \
+following the replacement"
   (if (and (< (point) end) (> (point start)))
       (goto-char end))
   (save-excursion
@@ -107,7 +113,7 @@ following the replacement"
 
 ;; assumes preceding character is \#
 (defun unboxed--check-invalid-read-graph-occurence (pos0)
-  "Utility function for checking if reader failed due to encountering bare #N#"
+  "Check if reader failed due to encountering bare #N# at postion POS0."
   (let ((p2 (point))
 	p0 p1 N retval)
     (save-excursion
@@ -125,8 +131,8 @@ following the replacement"
 
 ;; assumes preceding character is either \) or \]
 (defun unboxed--check-invalid-non-atomic (pos0)
-  "Utility function for checking if reader failed due to encountering a non-atomic
-sexpr containing a #N#."
+  "Check if reader failed due to encountering a non-atomic \
+sexpr containing a #N# at position POS0."
   (let ((p2 (point))
 	(close (preceding-char))
 	open p1)
@@ -142,10 +148,10 @@ sexpr containing a #N#."
       p1)))
 
 (defun unboxed--check-invalid-read (pos0)
-  "Utility function to check for whether an invalid-read-syntax
-error corresponded to a subexpression that should produce an
-object, and dispatching accordingly, or something like `.' that is
-purely syntactic"
+  "Check for whether an invalid-read-syntax \
+error corresponded to a subexpression at POS0 that should produce an \
+object, and dispatching accordingly, or something like `.' that is \
+purely syntactic."
   (let (p1)
     (cond
      ((eq (preceding-char) ?\#) ; check for #N#
@@ -156,6 +162,7 @@ purely syntactic"
     p1))
 
 (defun unboxed--symbol-read-syntax (sym)
+  "Return special read syntax associated with SYM."
   (pcase sym
     ('quote "'")
     ('function "#'")
@@ -167,7 +174,8 @@ purely syntactic"
 ;; this handles situations where the reader returns a list but
 ;; the character at point is not a left parenthesis
 (defun unboxed--read-syntax-end (pos1 sym)
-  "Determine the length of the read syntax for the symbol at point"
+  "Find the position at the start of the sexp following the \
+special read syntax for SYM with a lower bound of POS1."
   (let ((s (unboxed--symbol-read-syntax sym))
 	p)
     (when s
@@ -184,25 +192,25 @@ purely syntactic"
 
 ;;  unboxed--pcase-replace-next-sexpr calls read from point to skip
 ;;  any comments and get the value represented by the text for
-;;  testing. 
+;;  testing.
 ;;  It then attempts to identify the beginning of the textual
 ;;  representation using unboxed--back-sexpr before testing for
 ;;  replacement.
 ;;  We assume the (possibly narrowed) current buffer contains a valid
 ;;  elisp program. Given that, read will still signal an error in two
-;;  cases: 
+;;  cases:
 ;;  1) When the EOF is reached - read has no other mechanism for
 ;;     indicating all expressions have been read
 ;;  2) Due to syntax that is valid as a subexpression of some sexpr,
-;;     but not as a stand-alone expression.  
+;;     but not as a stand-alone expression.
 ;;     a) Graph notation #N# represents an *occurrence* of an object
 ;;        represented elsewhere.  Hence we treat the traversal of this
 ;;        notation as a successful reading of the corresponding
 ;;        expression, although this prevents pcase testing from being
-;;        performed on any containing sexpr 
+;;        performed on any containing sexpr
 ;;     b) Graph notation #N= defining a graph object.  In this case we
 ;;        attempt to read the following object since the #N= does not
-;;        itself correspond to any object occurrence. 
+;;        itself correspond to any object occurrence.
 ;;     c) The dot in a dotted pair representation of a cons cell. In
 ;;        this case we attempt to read the following sexpr as the dot
 ;;        does not correspond to any constructed object.
@@ -211,7 +219,7 @@ purely syntactic"
 ;;        the top-level expression was successfully read.
 ;;  Note the lack of recording graph notation values means that pcase
 ;;  testing is not truly done *inside* circular objects in the elisp
-;;  source code. 
+;;  source code.
 ;;
 ;;  In this implementation, there are 3 main positions of concern:
 ;;  position 0 - the initial value of point before calling read
@@ -219,7 +227,7 @@ purely syntactic"
 ;;               of an expression
 ;;  position 1 - the position immediately preceding the first
 ;;               character of the text representing the value which is
-;;               going to be tested and possibly replaced 
+;;               going to be tested and possibly replaced
 ;;
 ;;  Every position 0 is either the beginning of the buffer or position
 ;;  2 of some processed value.
@@ -231,9 +239,10 @@ purely syntactic"
 ;;          length two.
 ;;          *** Should be fixed
 (defun unboxed--pcase-replace-next-sexpr (sexpr-pred)
-  "Perform matching/replacement in the region containing the first
-  sexpr found in the current buffer following the point in the current
-  buffer. The search will recurse if the sexpr is a list or vector."
+  "Replace the next sexpr when `(SEXPR-PRED sexp)' produces a non-nil value.
+SEXPR-PRED must return a singleton list.  The text corresponding to \
+the next sexp will be replaced with text for which the reader will \
+construct an object equal to the element of the list."
   (let ((pos0 (point))
 	(read-attempts 0)
 	eof pos1 pos2 v m)
@@ -273,7 +282,7 @@ purely syntactic"
 	  (unboxed--pcase-replace-in-seq sexpr-pred 0 (length v))
 	  (when (<= (point) pos1)
 	    (signal 'unboxed-replace-sexpr `[,v ,pos0 ,pos1 ,pos2 ,(point)]))))
-       ((consp v)  
+       ((consp v)
 	(save-excursion
 	  (goto-char (scan-lists pos1 1 -1))
 	  (let ((ls v))
@@ -287,6 +296,9 @@ purely syntactic"
     (not eof)))
 
 (defun unboxed--pcase-replace-in-seq (sexpr-pred i n)
+  "Replace sexprs in a sequence of N textual representations where point \
+precedes the I'th object of the sequence.  Matching is performed by \
+SEXPR-PRED as described for `unboxed--pcase-replace-next-sexpr'."
   (while (< i n)
     (unboxed--pcase-replace-next-sexpr sexpr-pred)
     (cl-incf i)))
@@ -296,8 +308,8 @@ purely syntactic"
 ;; Replacement should not disturb relative position of the text surrounding the text
 ;; that produced the sexpr matching the supplied pcase pattern
 (defun unboxed--pcase-replace-sexpr (sexpr-pred)
-  "Simple search and replace on sexprs to match common expressions
-   used in defining data directory variables for packages."
+  "Search and replace textual sexprs in current buffer using \
+SEXPR-PRED as described for `unboxed--pcase-replace-next-sexpr'."
   (emacs-lisp-mode)
   (let ((parse-sexp-ignore-comments t))
     (save-excursion
