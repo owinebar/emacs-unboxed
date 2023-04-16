@@ -1,3 +1,4 @@
+;;; unboxed-file-management.el --- file management routines
 ;;; unboxed-file-management.el        -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
@@ -26,12 +27,14 @@
 ;;; Code:
 
 (require 'async)
+(require 'async-job-queue)
 (require 'unboxed-decls)
 (require 'unboxed-categories)
 
 (defun unboxed--install-info-file-in-dir (installed-file)
-  "Utility for creating entry for an unboxed package info file in the dir file
-  for unboxed packages"
+  "Install info file from INSTALLED-FILE.
+Utility for creating entry for an unboxed package info file in the dir file \
+for unboxed packages"
   (let ((file (unboxed-installed-file-file installed-file))
 	(loc (unboxed-installed-file-category-location
 	      installed-file))
@@ -49,8 +52,9 @@
   nil)
 
 (defun unboxed--remove-info-file-from-dir (installed-file)
-  "Utility for creating entry for an unboxed package info file in the dir file
-  for unboxed packages"
+  "Remove info file specified in INSTALLED-FILE struct.
+Utility for creating entry for an unboxed package info file in the dir file \
+for unboxed packages"
   (let ((file (unboxed-installed-file-file installed-file))
 	(loc (unboxed-installed-file-category-location
 	      installed-file))
@@ -68,6 +72,11 @@
     (setf (unboxed-installed-file-log installed-file) log-text)))
 
 (defun unboxed--make-install-logfile (base pkg-name &optional filename)
+  "Make a temporary file to record log buffers from async process with prefx \
+of the form BASE[-PKG-NAME-][-FILENAME-].
+BASE - prefix of file name
+PKG-NAME - package being installed, or nil if none
+FILENAME - file name being installed, or nil if none"
   (unless unboxed-temp-directory
     (setq unboxed-temp-directory (file-name-concat user-emacs-directory
 						   "tmp")))
@@ -76,10 +85,11 @@
   (unless (file-accessible-directory-p unboxed-temp-directory)
     (make-directory unboxed-temp-directory t))
   (let ((logfile-base (concat base
-			      "-"
-			      (symbol-name pkg-name)
+			      (if pkg-name
+				  (concat "-"
+					  (symbol-name pkg-name)))
 			      (if filename
-				  (concat "--"
+				  (concat (if pkg-name "--" "-")
 					  (file-name-nondirectory filename))
 				"")
 			      "-"))
@@ -87,9 +97,9 @@
     (make-temp-file logfile-base)))
 
 (defun unboxed--async-byte-compile-file (file)
-  "Function to byte compile an elisp file"
+  "Byte-compile FILE in asyncronous sandbox."
   (let ((el-name (file-name-nondirectory file))
-	logfile-base 
+	logfile-base
 	logfile
 	log-text
 	elc-name
@@ -99,7 +109,7 @@
 	proc-result)
     (setq logfile-base (file-name-sans-extension el-name)
 	  logfile (let ((temporary-file-directory unboxed-temp-directory))
-		    (make-temp-file 
+		    (make-temp-file
 		     (concat "compile-log--" logfile-base "-")))
 	  el-path (expand-file-name el-name)
 	  elc-path  (if (string= (file-name-extension el-path) "el")
@@ -133,21 +143,22 @@
     result))
 
 (defun unboxed--async-byte-compile-library (db installed-file)
-  "Function to byte compile an unboxed elisp library from a package.
-This function defines the following global symbols during compile, so
-a package may capture their value in an eval-when-compile form.
+  "Byte-compile library file of INSTALLED-FILE for package in DB in \
+asyncronous sandbox.
+This function defines the following global symbols during compile, so \
+a package may capture their value in an `eval-when-compile' form.
   `unboxed-package' Name of the package being installed as a symbol
-  `unboxed-package-version' Version of the package being installed as
+  `unboxed-package-version' Version of the package being installed as \
   a string
-  `unboxed-package-box' Directory containing the unpacked archive of
+  `unboxed-package-box' Directory containing the unpacked archive of \
   the package
-  `unboxed-library-directory' Directory containing the top-level elisp
+  `unboxed-library-directory' Directory containing the top-level elisp \
   libraries of unboxed packages
-  `unboxed-theme-directory' Directory containing theme files from
+  `unboxed-theme-directory' Directory containing theme files from \
   unboxed packages
-  `unboxed-info-directory' Directory containing info files from
+  `unboxed-info-directory' Directory containing info files from \
   unboxed packages
-  `unboxed-package-data-directory' Package-specific directory
+  `unboxed-package-data-directory' Package-specific directory \
   containing any other installed files from this package."
   (let ((area (unboxed--sexpr-db-area db))
 	(cats (unboxed--sexpr-db-categories db))
@@ -217,6 +228,8 @@ a package may capture their value in an eval-when-compile form.
 ;;; install-action returns a list of file names actually installed
 ;;; relative to the supplied location
 (defun unboxed--install-list (cname db pd files install-action)
+  "Install list of FILES of package PD in DB from category CNAME \
+using INSTALL-ACTION."
   (let ((cat (cdr (assq cname (unboxed--sexpr-db-categories db))))
 	(ls files)
 	(pkg (unboxed-package-desc-name pd))
@@ -242,6 +255,8 @@ a package may capture their value in an eval-when-compile form.
     installed))
 
 (defun unboxed--install-simple-copy (db pd cat file)
+  "Install action to perform a simple copy of FILE from DB package PD \
+directory into location of category CAT."
   (let ((version (unboxed-package-desc-version-string pd))
 	(pkg (unboxed-package-desc-name pd))
 	(cname (unboxed-file-category-name cat))
@@ -263,6 +278,8 @@ a package may capture their value in an eval-when-compile form.
     `(,inst)))
 
 (defun unboxed--install-pkg-relative-copy (db pd cat file)
+  "Install action to perform a relative copy of FILE from DB package PD \
+directory into package-specific subdirectory of location of category CAT."
   (let ((version (unboxed-package-desc-version-string pd))
 	(pkg (unboxed-package-desc-name pd))
 	(cname (unboxed-file-category-name cat))
@@ -289,7 +306,8 @@ a package may capture their value in an eval-when-compile form.
 
 ;;; "files" here are installed-file structs
 ;;; remove-action takes the same arguments as an install-cation
-(defun unboxed--remove-list (area files remove-action)
+(defun unboxed--remove-list (db files remove-action)
+  "Remove list of files FILES from DB using REMOVE-ACTION function."
   (let ((ls files)
 	cat
 	cat-loc
@@ -323,6 +341,7 @@ a package may capture their value in an eval-when-compile form.
     deleted))
 
 (defun unboxed--remove-simple-delete (pkg cat file src-loc dst-loc)
+  "Delete FILE of category CAT installed in DST-LOC from package PKG."
   (let ((dest (file-name-concat dst-loc (file-name-non-directory file)))
 	(src (file-name-concat src-loc file)))
     (condition-case nil
@@ -338,24 +357,31 @@ a package may capture their value in an eval-when-compile form.
 ;;; category for a specific package
 ;;; file names are given as relative paths to the package directory
 (defun unboxed-install-theme (db pd files)
+  "Install theme files FILES for package PD of DB."
   (unboxed--install-list 'theme db pd files #'unboxed--install-simple-copy))
   
 (defun unboxed-install-library (db pd files)
+  "Install library files FILES for package PD of DB."
   (unboxed--install-list 'library db pd files #'unboxed--install-simple-copy))
 
 (defun unboxed-install-module (db pd files)
+  "Install module (shared library) files FILES for package PD of DB."
   (unboxed--install-list 'module db pd files #'unboxed--install-simple-copy))
 
 (defun unboxed-install-info (db pd files)
+  "Install info files FILES for package PD of DB."
   (unboxed--install-list 'info db pd files #'unboxed--install-simple-copy))
 
 (defun unboxed-install-byte-compiled (db pd files)
+  "Install (discard) byte-compiled files FILES for package PD of DB."
   nil)
 
 (defun unboxed-install-native-compiled (db pd files)
+  "Install (discard) byte-compiled files FILES for package PD of DB."
   nil)
 
 (defun unboxed-install-data (db pd files)
+  "Install residual files FILES for package PD of DB in package data directory."
   (let ((area (unboxed--sexpr-db-area db))
 	(loc (unboxed-file-category-location
 	      (cdr (assoc 'data
@@ -380,26 +406,33 @@ a package may capture their value in an eval-when-compile form.
 
 
 ;;; These removers are used for lists of installed files
-(defun unboxed-remove-theme (area files)
-  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-theme (db pd files)
+  "Remove theme files FILES for package PD of DB."
+  (unboxed--remove-list db files #'unboxed--remove-simple-delete))
   
-(defun unboxed-remove-library (area files)
-  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-library (db pd files)
+  "Remove library files FILES for package PD of DB."
+  (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
-(defun unboxed-remove-byte-compiled (area pd files)
+(defun unboxed-remove-byte-compiled (db pd files)
+  "Remove byte-compiled files FILES for package PD of DB."
   nil)
 
-(defun unboxed-remove-native-compiled (area pd files)
+(defun unboxed-remove-native-compiled (db pd files)
+  "Remove native-compiled files FILES for package PD of DB."
   nil)
 
-(defun unboxed-remove-module (area files)
-  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-module (db pd files)
+  "Remove module (shared library) files FILES for package PD of DB."
+  (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
-(defun unboxed-remove-info (area files)
-  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-info (db pd files)
+  "Remove info files FILES for package PD of DB."
+  (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
-(defun unboxed-remove-data (area files)
-  (unboxed--remove-list area files #'unboxed--remove-simple-delete))
+(defun unboxed-remove-data (db pd files)
+  "Remove data files FILES for package PD of DB."
+  (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
 
 
@@ -410,11 +443,12 @@ a package may capture their value in an eval-when-compile form.
 ;;; during finalization that must be removed when uninstalling a
 ;;; package, e.g. elc files
 ;;;   all-cats is provided since the install locations vary between
-;;; system and user package sets. 
+;;; system and user package sets.
 
 ;; rebuild the unboxed library autoloads and byte-compile
 ;; the libraries
 (defun unboxed-finalize-install-library (db cat files)
+  "Finalize installation of library files FILES in category CAT of DB."
   (let ((loc (unboxed-file-category-location cat))
 	(area (unboxed--sexpr-db-area db))
 	autoloads-fn autoloads-file result ls
@@ -439,14 +473,17 @@ a package may capture their value in an eval-when-compile form.
 	  (setq new-installed (nconc comp-file new-installed)))))
     new-installed))
 
-(defun unboxed-finalize-install-byte-compiled (area cat files)
+(defun unboxed-finalize-install-byte-compiled (db cat files)
+  "Finalize installation of byte-compiled files FILES in category CAT of DB."
   nil)
 
-(defun unboxed-finalize-install-native-compiled (area cat files)
+(defun unboxed-finalize-install-native-compiled (db cat files)
+  "Finalize installation of native-compiled files FILES in category CAT of DB."
   nil)
 
 ;; rebuild the directory file
 (defun unboxed-finalize-install-info (db cat files)
+  "Finalize installation of info files FILES in category CAT of DB."
   (let ((ls files)
 	file)
     (while ls
@@ -456,38 +493,51 @@ a package may capture their value in an eval-when-compile form.
 
 ;; other categories require no additional work
 (defun unboxed-finalize-install-module (db cat files)
+  "Finalize installation of module files FILES in category CAT of DB."
   nil)
 
 (defun unboxed-finalize-install-data (db cat files)
+  "Finalize installation of data files FILES in category CAT of DB."
   nil)
 
 (defun unboxed-finalize-install-theme (db cat files)
+  "Finalize installation of theme files FILES in category CAT of DB."
   nil)
 
 (defun unboxed-finalize-remove-theme (db cat files)
+  "Finalize removal of theme files FILES in category CAT of DB."
   nil)
   
 (defun unboxed-finalize-remove-library (db cat files)
+  "Finalize removal of library files FILES in category CAT of DB."
   nil)
 
-(defun unboxed-finalize-remove-byte-compiled (area pd files)
+(defun unboxed-finalize-remove-byte-compiled (db cat files)
+  "Finalize removal of byte-compiled files FILES in category CAT of DB."
   nil)
 
-(defun unboxed-finalize-remove-native-compiled (area pd files)
+(defun unboxed-finalize-remove-native-compiled (db cat files)
+  "Finalize removal of native-compiled files FILES in category CAT of DB."
   nil)
 
 (defun unboxed-finalize-remove-module (db cat files)
+  "Finalize removal of module files FILES in category CAT of DB."
   nil)
 
 (defun unboxed-finalize-remove-info (db cat files)
+  "Finalize removal of info files FILES in category CAT of DB."
   nil)
 
 (defun unboxed-finalize-remove-data (db cat files)
+  "Finalize removal of data files FILES in category CAT of DB."
   nil)
 
 	
+
+
 (provide 'unboxed-file-management)
 
-;;; unboxed-file-managment.el ends here
-
-;; 
+;;; unboxed-file-management.el ends here
+;; Local Variables:
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
+;; End:
