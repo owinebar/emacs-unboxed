@@ -184,4 +184,7 @@ to be executed last and just returns true."
 
 ;;; unboxed-categories.el ends here
 
+;; Local Variables:
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
+;; End:
 ;; 

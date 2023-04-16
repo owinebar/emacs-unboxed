@@ -384,4 +384,7 @@ table assuming no packages have been unboxed"
 
 ;;; unboxed-database.el ends here
 
+;; Local Variables:
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
+;; End:
 ;; 

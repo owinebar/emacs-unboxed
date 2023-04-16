@@ -84,5 +84,8 @@ under management of unboxed system"
 (provide 'unboxed)
 ;;; unboxed.el ends here
 
+;; Local Variables:
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
+;; End:
 ;; 
 
