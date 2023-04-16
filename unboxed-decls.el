@@ -1,3 +1,4 @@
+;;; unboxed-decls.el --- Structure declarations for unboxed
 ;;; unboxed-decls.el        -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
@@ -80,26 +81,32 @@ or site packages
   installed)
 
 (defun unboxed--sexpr-db-name (db)
+  "Return the name of DB."
   (unboxed--area-name
    (unboxed--sexpr-db-area db)))
 
 (defun unboxed--sexpr-db-boxes (db)
+  "Return the box paths of DB."
   (unboxed--area-boxes
    (unboxed--sexpr-db-area db)))
 
 (defun unboxed--sexpr-db-path (db)
+  "Return the path to the file for DB."
   (unboxed--area-db-path
    (unboxed--sexpr-db-area db)))
 
-(defun unboxed--sexpr-db-datadir-patterns (db)
-  (unboxed--area-datadir-pats
-   (unboxed--sexpr-db-area db)))
+;; (defun unboxed--sexpr-db-datadir-patterns (db)
+;;   "Return the  of DB"
+;;   (unboxed--area-datadir-pats
+;;    (unboxed--sexpr-db-area db)))
 
 (defun unboxed--sexpr-db-categories (db)
+  "Return the file categories of DB."
   (unboxed--area-categories
    (unboxed--sexpr-db-area db)))
 
 (defun unboxed--sexpr-db-category-location (db catname)
+  "Return the location category CATNAME of DB."
   (let ((cats (unboxed--sexpr-db-categories db))
 	result)
     (setq result (assq catname cats)
@@ -116,7 +123,7 @@ Other than predicate, the function slots may be nil.
   `name' name of file category as symbol
   `area' name of the area using this category definition
   `path-variable' elisp variable for path associated with this
-         file category, nil if none  
+         file category, nil if none
   `predicate' predicate to classify file given full path
   `location' path for installing this file category
   `install-files' function to invoke with list of files,
@@ -179,7 +186,7 @@ from a file.
   `version' version of this struct
   `seq-type' Value of (cl-struct-sequence-type 'package-desc)
   `keys' Keywords for use with constructor for the slot at
-         the corresponding index  
+         the corresponding index
   `slot-info' Value of (cl-struct-slot-info 'pacakge-desc)"
   (version 1 :read-only t)
   seq-type
@@ -191,7 +198,7 @@ from a file.
 	       (:copier unboxed-package-desc-copy)
 	       (:include package-desc))
   "Package desc structure extended with fields recording its
-installation manager 
+installation manager
   Slots:
   `single' boolean which is t if the package is for a single library file
   `simple' boolean which is t if the package directory has no subdirectories
@@ -203,6 +210,7 @@ installation manager
   manager)
 
 (defun unboxed-package-single-p (pd)
+  "Test whether package descriptor PD is for a single file package."
   (let ((d (package-desc-dir pd))
 	(name (symbol-name (package-desc-name pd)))
 	all main auto pkg r)
@@ -217,6 +225,7 @@ installation manager
 
 
 (defun unboxed-package-simple-p (pd)
+  "Test whether package descriptor PD is for a package with no subdirectories."
   (let ((d (package-desc-dir pd))
 	(name (symbol-name (package-desc-name pd)))
 	(no-subdirs t)
@@ -228,9 +237,11 @@ installation manager
     no-subdirs))
 
 (defun unboxed-package-any-p (pd)
+  "Test that succeeds for any package descriptor PD."
   t)
 
 (defun unboxed-package-none-p (pd)
+  "Test that fails for any package descriptor PD."
   nil)
 
 
@@ -243,10 +254,12 @@ installation manager
 	 (choice :tag "install-files" symbol function nil)
 	 (choice :tag "finalize-install-files" symbol function nil)
 	 (choice :tag "remove-files" symbol function nil)
-	 (choice :tag "finalize-remove-files" symbol function nil)))
+	 (choice :tag "finalize-remove-files" symbol function nil))
+  "Customization type for file categories.")
 
-(defconst unboxed--sexpr-db-customization-type
-  `(list (repeat :tag "File Categories" ,unboxed--file-category-customization-type)))
+(defconst unboxed--category-list-customization-type
+  `(list (repeat :tag "File Categories" ,unboxed--file-category-customization-type))
+  "Customization type for list of file categories.")
 
 (defconst unboxed--area-customization-type
   `(list (symbol :tag "Area Name")
@@ -265,12 +278,15 @@ installation manager
 	 (choice :tag "Data Directory patterns" symbol nil)
 	 (choice :tag "Patches" symbol nil)
 	 (choice :tag "Autoloads Filename" symbol string nil)
-	 ,unboxed--sexpr-db-customization-type))
+	 ,unboxed--sexpr-db-customization-type)
+  "Customization type for database area.")
 
 (defun unboxed--make-keyword (fld)
+  "Create the keyword symbol for FLD."
   (intern (concat ":" (symbol-name fld))))
 
 (defun unboxed--make-struct-layout (name)
+  "Create a layout struct recording the NAME struct definition."
   (let ((seq-type (cl-struct-sequence-type name))
 	(slot-info (cl-struct-slot-info name))
 	keys)
@@ -291,6 +307,8 @@ installation manager
   "Association list of layout descriptors of the structs used in unboxed database files.")
 
 (defun unboxed--resolve-conf-list (v)
+  "Resolve V to a string or list of strings by treating symbols as variables \
+and recursing on lists until a list of strings is produced."
   (cond
    ((listp v) (mapcan #'unboxed--resolve-conf-list v))
    ((stringp v)   (list v))
@@ -302,12 +320,14 @@ installation manager
    (t nil)))
 
 (defun unboxed--resolve-conf-val (v)
+  "Resolve V to a string if it is a symbol."
   (cond
    ((stringp v)   v)
    ((boundp v) (symbol-value v))
    (t nil)))
 
 (defun unboxed--resolve-conf-func (v)
+  "Resolve V to a function object if it is a symbol."
   (cond
    ((not (symbolp v))
     (and (functionp v) v))
@@ -325,6 +345,17 @@ installation manager
 			   patches-conf
 			   autoloads-conf
 			   cats)
+  "Create an unboxing area based on configuration values.
+NAME
+BOXES-CONF
+DB-PATH-CONF
+PRED-CONF
+EXCLUDED-CONF
+THEME-LIBS-CONF
+DATADIR-CONF
+PATCHES-CONF
+AUTOLOADS-CONF
+CATS"
   (let ((boxes (unboxed--resolve-conf-list boxes-conf))
 	(db-path (unboxed--resolve-conf-val db-path-conf))
 	(pred (unboxed--resolve-conf-func pred-conf))
@@ -357,10 +388,6 @@ installation manager
 (define-error 'unboxed-invalid-category-spec
   "One or more fields in a file category specification is invalid")
 
-(defun unboxed--promote-package-desc (pd manager)
-  "Takes a packge-desc struct and returns and unboxed-package-desc struct"
-  
-  )
 
 (provide 'unboxed-decls)
 ;;; unboxed-decls.el ends here
