@@ -48,7 +48,7 @@
 will be stored" 
   :type 'directory
   :group 'unboxed-user)
-(defcustom unboxed-user-area-pred #'unboxed-package-any-p
+(defcustom unboxed-user-area-pred nil ;#'unboxed-package-any-p
   "Predicate for determining whether a user package should be unboxed."
   :type '(choice :tag "Predicate" function nil)
   :group 'unboxed-user)
@@ -58,7 +58,7 @@ will be stored"
 will be stored" 
   :type 'directory
   :group 'unboxed-site)
-(defcustom unboxed-site-area-pred #'unboxed-package-any-p
+(defcustom unboxed-site-area-pred nil ;#'unboxed-package-any-p
   "Predicate for determining whether a site package should be unboxed."
   :type '(choice :tag "Predicate" function nil)
   :group 'unboxed-site)
@@ -353,17 +353,40 @@ site packages."
 ;;  containing the replacement value
 (defun unboxed--pcase-replace-sexpr-p (sexpr replacement) nil)
 
+;; (defun unboxed--set-pcase-replace-sexpr-p (sym patterns)
+;;   (let* ((subst-var (make-symbol "value"))
+;; 	 (sexpr-var (make-symbol "sexpr"))
+;; 	 (clauses (mapcar (lambda (pattern)
+;; 			    `(,pattern (list ,subst-var)))
+;; 			  patterns))
+;; 	 (defun-expr
+;; 	   `(defun unboxed--pcase-replace-sexpr-p (,sexpr-var  ,subst-var) 
+;; 	      (pcase ,sexpr-var
+;; 		,@clauses
+;; 		(_ nil)))))
+;;     (message "set-pcase-replace %S %S" sym patterns)
+;;     (with-temp-buffer
+;;       (prin1 defun-expr (current-buffer))
+;;       (terpri (current-buffer))
+;;       (goto-char 0)
+;;       ;; compile the defun and install it - do not display the result
+;;       ;; in the echo area 
+;;       (compile-defun t)
+;;       (put sym 'unboxed-rewriter (symbol-function 'unboxed--pcase-replace-sexpr-p))
+;;       (set-default-toplevel-value sym patterns))))
+
 (defun unboxed--set-pcase-replace-sexpr-p (sym patterns)
-  (let* ((subst-var (make-symbol "value"))
+  (let* ((subst-var '(eval-when-compile unboxed-package-data-directory))
 	 (sexpr-var (make-symbol "sexpr"))
 	 (clauses (mapcar (lambda (pattern)
-			    `(,pattern (list ,subst-var)))
+			    `(,pattern (list ',subst-var)))
 			  patterns))
 	 (defun-expr
-	   `(defun unboxed--pcase-replace-sexpr-p (,sexpr-var  ,subst-var) 
+	   `(defun unboxed--pcase-replace-sexpr-p (,sexpr-var)
 	      (pcase ,sexpr-var
 		,@clauses
 		(_ nil)))))
+    (message "set-pcase-replace %S %S" sym patterns)
     (with-temp-buffer
       (prin1 defun-expr (current-buffer))
       (terpri (current-buffer))
@@ -371,11 +394,16 @@ site packages."
       ;; compile the defun and install it - do not display the result
       ;; in the echo area 
       (compile-defun t)
+      (put sym 'unboxed-rewriter (symbol-function 'unboxed--pcase-replace-sexpr-p))
       (set-default-toplevel-value sym patterns))))
 
 
 (defcustom unboxed-user-data-directory-patterns
-  nil
+  '(`(file-name-directory load-file-name)
+    `(file-name-directory (or load-file-name . ,rest))
+    `(file-name-directory (or . ,(and (pred listp)
+				      ls
+				      (guard (memq 'load-file-name ls))))))
   "A list of pcase patterns that match against known expressions used to
 compute a packages installation directory at either compile or load time.
 Any matches will be hard-coded to be the value of the unboxed package's
@@ -386,7 +414,11 @@ data directory as a string."
   )
 
 (defcustom unboxed-site-data-directory-patterns
-  nil
+  '(`(file-name-directory load-file-name)
+    `(file-name-directory (or load-file-name . ,rest))
+    `(file-name-directory (or . ,(and (pred listp)
+				      ls
+				      (guard (memq 'load-file-name ls))))))
   "A list of pcase patterns that match against known expressions used to
 compute a packages installation directory at either compile or load time.
 Any matches will be hard-coded to be the value of the unboxed package's

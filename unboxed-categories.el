@@ -27,6 +27,9 @@
 
 (require 'unboxed-decls)
 
+(defvar unboxed-theme-libraries
+  '(apropospriate-theme))
+(defvar 
 ;;; libraries to install in the package lisp directory
 (defun unboxed-library-p (path)
   "Predicate for elisp libraries contained in packages that should be

@@ -26,15 +26,39 @@
 
 ;;; Code:
 
-(require 'unboxed-custom)
+;(require 'unboxed-custom)
 
 (define-error 'unboxed-replace-sexpr "Bad sexpr parse")
+(define-error 'unboxed-unrecognized-read-syntax
+  "Unrecognized read syntax")
 
+
+(defun unboxed--next-sexpr-start ()
+  "Find the start of the *next* sexpr, which may begin at point but no
+earlier"
+  (save-excursion
+    (save-restriction
+      (narrow-to-region (point) (point-max))
+      (forward-sexp)
+      (backward-sexp)
+      (point))))
+
+(defun unboxed--this-sexpr-start (&optional min-start)
+  "Find the start of the sexpr which point follows or is in"
+  (save-excursion
+    (save-restriction
+      (when min-start
+	(narrow-to-region min-start (point-max)))
+      (condition-case nil
+	  (forward-sexp -1)
+	(error (goto-char min-start)))
+      (point))))
 
 ;; assumes parse-sexp-ignore-comments is t
-(defun unboxed--back-sexpr (v p0)
-  (let ((p2 (point))
-	p1)
+(defun unboxed--back-sexpr (v p0 &optional p2)
+  (unless p2
+    (setq p2 (point)))
+  (let (p1)
     ;; check for named unicode character that is not handled well by
     ;; emacs-lisp-mode (forward-sexp -1) 
     (when (and (char-or-string-p v)
@@ -50,16 +74,15 @@
 	       (forward-char -3)
 	       (setq p1 (point))))))
     ;; (forward-sexp -1) also does not deal well with ## (the empty symbol)
-    (unless (or p1 (not (and (symbolp v) (eq (preceding-char ?\#)))))
+    (unless (or p1 (not (and (symbolp v) (eq (preceding-char) ?\#))))
       (forward-char -1)
       (and (> (point) p0)
-	   (eq (preceding-char ?\#))
-	   (forward-char -1)
-	   (setq p1 (point))))
+	   (eq (preceding-char) ?\#)
+	   (setq p1 (unboxed--this-sexpr-start p0))))
     ;; #N# references are dealt with directly when read error is detected
     ;; assume other cases fairly well-behaved
     (unless p1
-      (forward-sexp -1)
+      (goto-char (unboxed--this-sexpr-start p0))
       (cond
        ((recordp v)
 	(when (and (>= (point) (+ p0 2))
@@ -72,7 +95,7 @@
     p1))
        
 (defun unboxed--replace-text-in-region (start end new)
-  "Utility function for replacing region with specified string.
+  "Utility function for replacing region with specified SEXP.
 If point is inside the region, it will be at the end of the region
 following the replacement" 
   (if (and (< (point) end) (> (point start)))
@@ -80,7 +103,7 @@ following the replacement"
   (save-excursion
     (goto-char end)
     (delete-region start end)
-    (insert new)))
+    (prin1 new (current-buffer))))
 
 ;; assumes preceding character is \#
 (defun unboxed--check-invalid-read-graph-occurence (pos0)
@@ -125,12 +148,39 @@ object, and dispatching accordingly, or something like `.' that is
 purely syntactic"
   (let (p1)
     (cond
-     ((eq (preceding-char ?\#)) ; check for #N#
+     ((eq (preceding-char) ?\#) ; check for #N#
       (setq p1 (unboxed--check-invalid-read-graph-occurence pos0)))
-     ((or (eq (preceding-char ?\)))
-	  (eq (preceding-char ?\]))) ; check for non-atomic
+     ((or (eq (preceding-char) ?\))
+	  (eq (preceding-char) ?\])) ; check for non-atomic
       (setq p1 (unboxed--check-invalid-non-atomic pos0))))
     p1))
+
+(defun unboxed--symbol-read-syntax (sym)
+  (pcase sym
+    ('quote "'")
+    ('function "#'")
+    ('\` "`")
+    ('\, ",")
+    ('\,@ ",@")
+    (_ nil)))
+     
+;; this handles situations where the reader returns a list but
+;; the character at point is not a left parenthesis
+(defun unboxed--read-syntax-end (pos1 sym)
+  "Determine the length of the read syntax for the symbol at point"
+  (let ((s (unboxed--symbol-read-syntax sym))
+	p)
+    (when s
+      (setq p (+ pos1 (length s)))
+      (unless (string= (buffer-substring-no-properties pos1 p) s)
+	;; there can be whitespace between the special symbol and the
+	;; rest of the sexp, in which case (forward-sexp -1) misses
+	;; the special read syntax
+	(setq p pos1)))
+    (unless p
+      (signal 'unboxed-unrecognized-read-syntax
+	      `(,(current-buffer) ,pos1 ,sym)))
+    p))
 
 ;;  unboxed--pcase-replace-next-sexpr calls read from point to skip
 ;;  any comments and get the value represented by the text for
@@ -179,13 +229,14 @@ purely syntactic"
 ;;          Current implementation jumps into cadar of that pair
 ;;          but traverses that value assuming it is a sequence of
 ;;          length two.
-(defun unboxed--pcase-replace-next-sexpr ()
+;;          *** Should be fixed
+(defun unboxed--pcase-replace-next-sexpr (sexpr-pred)
   "Perform matching/replacement in the region containing the first
   sexpr found in the current buffer following the point in the current
   buffer. The search will recurse if the sexpr is a list or vector."
   (let ((pos0 (point))
 	(read-attempts 0)
-	eof pos1 pos2 v m retval)
+	eof pos1 pos2 v m)
     (while (and (not pos2) (not eof) (< read-attempts 2))
       (condition-case nil
 	  ;; this will error if there are no additional expressions found
@@ -202,36 +253,56 @@ purely syntactic"
       ;; could push this into the cond clause for a successful
       ;; match *if* matcher was guaranteed to have no side-effects
       (setq pos1 (unboxed--back-sexpr v pos0 pos2)
-	    m (unboxed--pcase-replace-matching-sexpr v))
+            ;; m (unboxed--pcase-replace-matching-sexpr v))
+	    m (funcall sexpr-pred v))
       (goto-char pos2)
       (cond
        (m (unboxed--replace-text-in-region pos1 pos2 (car m)))
        ((atom v) nil)
-       ((or (listp v) (recordp v) (arrayp v))
+       ((and (not (member (char-after pos1) '(?\( ?\[)))
+	     (consp v)
+	     (consp (cdr v))
+	     (null (cddr v))
+	     (symbolp (car  v)))
+	(save-excursion
+	  (goto-char (unboxed--read-syntax-end pos1 (car v)))
+	  (unboxed--pcase-replace-next-sexpr sexpr-pred)))
+       ((or (recordp v) (arrayp v))
 	(save-excursion
 	  (goto-char (scan-lists pos1 1 -1))
-	  (unboxed--pcase-replace-in-seq 0 (length v))
+	  (unboxed--pcase-replace-in-seq sexpr-pred 0 (length v))
 	  (when (<= (point) pos1)
-	    (signal unboxed-replace-sexpr `[,v ,pos0 ,pos1 ,pos2 ,(point)]))))))
+	    (signal 'unboxed-replace-sexpr `[,v ,pos0 ,pos1 ,pos2 ,(point)]))))
+       ((consp v)  
+	(save-excursion
+	  (goto-char (scan-lists pos1 1 -1))
+	  (let ((ls v))
+	    (while (consp ls)
+	      (unboxed--pcase-replace-next-sexpr sexpr-pred)
+	      (pop ls))
+	    (when ls
+	      (unboxed--pcase-replace-next-sexpr sexpr-pred)))
+	  (when (<= (point) pos1)
+	    (signal 'unboxed-replace-sexpr `[,v ,pos0 ,pos1 ,pos2 ,(point)]))))))
     (not eof)))
 
-(defun unboxed--pcase-replace-in-seq (i n)
+(defun unboxed--pcase-replace-in-seq (sexpr-pred i n)
   (while (< i n)
-    (unboxed--pcase-replace-next-sexpr)
+    (unboxed--pcase-replace-next-sexpr sexpr-pred)
     (cl-incf i)))
 
 ;; search text in current buffer for sexprs matching one of a supplied set of pcase patterns
 ;; if a match is found, replace the text with corresponding sexpr value
 ;; Replacement should not disturb relative position of the text surrounding the text
 ;; that produced the sexpr matching the supplied pcase pattern
-(defun unboxed--pcase-replace-sexpr ()
+(defun unboxed--pcase-replace-sexpr (sexpr-pred)
   "Simple search and replace on sexprs to match common expressions
    used in defining data directory variables for packages."
   (emacs-lisp-mode)
   (let ((parse-sexp-ignore-comments t))
     (save-excursion
       (goto-char (point-min))
-      (while (unboxed--pcase-replace-next-sexpr)))))
+      (while (unboxed--pcase-replace-next-sexpr sexpr-pred)))))
 
 
 (provide 'unboxed-rewrite-sexprs)

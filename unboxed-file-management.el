@@ -30,7 +30,14 @@
 (require 'async-job-queue)
 (require 'unboxed-decls)
 (require 'unboxed-categories)
+(require 'unboxed-rewrite-sexprs)
 
+(defun unboxed--file-grep (re file)
+  (with-temp-buffer
+    (insert-file-contents file)
+    (string-match-p re (buffer-string))))
+
+   
 (defun unboxed--install-info-file-in-dir (installed-file)
   "Install info file from INSTALLED-FILE.
 Utility for creating entry for an unboxed package info file in the dir file \
@@ -72,18 +79,11 @@ for unboxed packages"
     (setf (unboxed-installed-file-log installed-file) log-text)))
 
 (defun unboxed--make-install-logfile (base pkg-name &optional filename)
-  "Make a temporary file to record log buffers from async process with prefx \
-of the form BASE[-PKG-NAME-][-FILENAME-].
+  "Make a temporary file to record log buffers from async process with \
+prefix of the form BASE[-PKG-NAME-][-FILENAME-].
 BASE - prefix of file name
 PKG-NAME - package being installed, or nil if none
 FILENAME - file name being installed, or nil if none"
-  (unless unboxed-temp-directory
-    (setq unboxed-temp-directory (file-name-concat user-emacs-directory
-						   "tmp")))
-  (setq unboxed-temp-directory
-	(file-name-as-directory unboxed-temp-directory))
-  (unless (file-accessible-directory-p unboxed-temp-directory)
-    (make-directory unboxed-temp-directory t))
   (let ((logfile-base (concat base
 			      (if pkg-name
 				  (concat "-"
@@ -205,7 +205,7 @@ a package may capture their value in an `eval-when-compile' form.
 	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
 	       (when log-buffer
 		 (with-current-buffer log-buffer
-		   (write-region (point-min) (point-max) logfile))))))
+		   (write-region (point-min) (point-max) ,logfile))))))
     (setf (unboxed-installed-file-file elc-installed) elc-name)
     (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
     (setq proc (async-start program nil))
@@ -254,9 +254,22 @@ using INSTALL-ACTION."
     (setq installed (nreverse installed-files))
     installed))
 
+<<<<<<< HEAD
 (defun unboxed--install-simple-copy (db pd cat file)
   "Install action to perform a simple copy of FILE from DB package PD \
 directory into location of category CAT."
+=======
+(defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred)
+  (with-temp-buffer
+    (insert-file-contents src)
+    (unboxed--pcase-replace-sexpr sexpr-pred)
+    (write-region nil nil dest)))
+
+(defun unboxed--simple-copy (src dest &optional aux)
+  (copy-file src dest t))
+
+(defun unboxed--install-copy (db pd cat file copy-action &optional aux)
+>>>>>>> 8d7defa8ccb1bb67ea4bc2fbbb69bbcb6993dd4c
   (let ((version (unboxed-package-desc-version-string pd))
 	(pkg (unboxed-package-desc-name pd))
 	(cname (unboxed-file-category-name cat))
@@ -266,7 +279,7 @@ directory into location of category CAT."
     (setq dst-file (file-name-nondirectory file)
 	  dest (file-name-concat dst-loc dst-file)
 	  src (file-name-concat src-loc file))
-    (copy-file src dest t)
+    (funcall copy-action src dest aux)
     (setq inst
 	  (unboxed-installed-file-create :package pkg
 					 :package-version-string version
@@ -276,6 +289,24 @@ directory into location of category CAT."
 					 :file dst-file
 					 :package-source file))
     `(,inst)))
+
+(defun unboxed--install-rewriting-library-copy (db pd cat file)
+  ;; FIXME - predicate should be configurable
+  (if (and (not (unboxed-package-desc-simple pd))
+	   (unboxed--file-grep
+	    "load-file-name"
+	    (expand-file-name file (unboxed-package-desc-dir pd))))
+      (let ((sym (unboxed--sexpr-db-datadir-patterns db)))
+	(unboxed--install-copy
+	 db pd cat file
+	 #'unboxed--sexpr-rewriting-copy
+	 (get sym 'unboxed-rewriter)))
+    (unboxed--install-copy
+     db pd cat file
+     #'unboxed--simple-copy)))
+
+(defun unboxed--install-simple-copy (db pd cat file)
+  (unboxed--install-copy db pd cat file #'unboxed--simple-copy))
 
 (defun unboxed--install-pkg-relative-copy (db pd cat file)
   "Install action to perform a relative copy of FILE from DB package PD \
@@ -361,8 +392,12 @@ directory into package-specific subdirectory of location of category CAT."
   (unboxed--install-list 'theme db pd files #'unboxed--install-simple-copy))
   
 (defun unboxed-install-library (db pd files)
+<<<<<<< HEAD
   "Install library files FILES for package PD of DB."
   (unboxed--install-list 'library db pd files #'unboxed--install-simple-copy))
+=======
+  (unboxed--install-list 'library db pd files #'unboxed--install-rewriting-library-copy))
+>>>>>>> 8d7defa8ccb1bb67ea4bc2fbbb69bbcb6993dd4c
 
 (defun unboxed-install-module (db pd files)
   "Install module (shared library) files FILES for package PD of DB."
