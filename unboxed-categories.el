@@ -72,7 +72,7 @@ installed in the unboxed library directory."
 (defun unboxed-theme-p (path)
   "Test if PATH is an elisp library contained in a package that should be \
 installed in the unboxed theme directory.  Any `*-theme.el' file whose \
-feature name is not contained in unboxed-theme-libraries variable is \
+feature name is not contained in `unboxed-theme-libraries' variable is \
 classified as a theme."
   (let ((ext (file-name-extension path))
 	(base (file-name-sans-extension (file-name-nondirectory path)))
