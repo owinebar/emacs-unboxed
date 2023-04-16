@@ -29,96 +29,11 @@
 (require 'package)
 
 (defvar unboxed--buffer-name "*Unboxed*"
-  "Name of unboxed logging buffer")
+  "Name of unboxed logging buffer.")
 
 (defvar unboxed--buffer (get-buffer-create unboxed--buffer-name)
-  "The unboxed logging buffer")
+  "The unboxed logging buffer.")
 
-(cl-defstruct (unboxed--active-table
-	       (:constructor unboxed--active-table-create)
-	       (:copier unboxed--active-table-copy))
-  "Structure describing the table of active jobs and associated lists
-  Slots:
-   `slots' vector of active descriptors
-   `first-used' index of the first entry in the list of slots in use
-   `last-used' index of the last entry in the list of slots in use
-   `first-free' index of first entry in the list of slots not in use
-   `last-free'  index of last entry in list of slots free
-   `poll-freq'  time between polling in use entries for completed jobs
-"
-  slots
-  first-used
-  last-used
-  first-free
-  last-free
-  poll-freq)
-
-
-(cl-defstruct (unboxed--active
-	       (:constructor unboxed--active-create)
-	       (:copier unboxed--active-copy))
-  "Structure for tracking running jobs
-  Slots:
-   `job' An unboxed--job struct or nil if free
-   `next' Integer of next entry in list this entry is part of (free or in-use)
-   `prev' Integer of previous entry in list this entry is part of
-"
-  job
-  next
-  prev)
-
-(defun unboxed--make-active-table (N freq)
-  "Creates an active table and all the structures that will be allocated
-for tracking the processor slots that can be used"
-  (let ((tbl (unboxed--active-table-create
-	      :slots (make-vector N)
-	      :first-used nil
-	      :last-used nil
-	      :first-free 0
-	      :last-free (1- N)
-	      :poll-freq freq))
-	(i 0)
-	(prev nil)
-	(next 1)
-	slots a)
-    (setq slots (unboxed--active-table-slots tbl))
-    (while (< i N)
-      (setq a (unboxed--active-create
-	       :job nil
-	       :next next
-	       :prev prev)
-	    prev i
-	    i next)
-      (cl-incf next)
-      (aset slots prev a))
-    (setf (unboxed--active-next a) nil)
-    tbl))
-
-	
-  
-(cl-defstruct (unboxed--job
-	       (:constructor unboxed--job-create)
-	       (:copier unboxed--job-copy))
-  "Structure for jobs unboxed has started.  Callbacks take job struct as first argument.
-  Slots:
-   `id' Identifier
-   `program' Elisp program run in the job
-   `started' start time
-   `max-time' maximum wall clock time to allow run, nil for no limit
-   `future' object representing the async process
-   `ended' time result was ready or job terminated
-   `result' nil if timed out, singleton list holding return value otherwise
-   `succeed' callback function to use when results are available
-   `fail' callback function to use when process times out."
-  id
-  program
-  started
-  max-time
-  future
-  ended
-  result
-  succeed
-  fail)
 
 (cl-defstruct (unboxed--area
 	       (:constructor unboxed--area-create)
@@ -137,7 +52,7 @@ or site packages
   `datadir-pats' Data directory pcase patterns for rewriting
   `patches' Package-specific patches in this area
   `autoloads-file' Name of generated autoloads file for unboxed libraries
-  `system-load-path' load-path set in \"emacs -Q\" invocation 
+  `system-load-path' load-path set in \"emacs -Q\" invocation
   `categories' Assoc list of file-categories."
   name
   boxes
