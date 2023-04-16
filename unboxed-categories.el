@@ -1,3 +1,4 @@
+;;; unboxed-categories.el --- File category implemenation for unboxed
 ;;; unboxed-categories.el        -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
@@ -29,16 +30,16 @@
 
 (defvar unboxed-theme-libraries
   '(apropospriate-theme))
-(defvar 
+(defvar
 ;;; libraries to install in the package lisp directory
 (defun unboxed-library-p (path)
-  "Predicate for elisp libraries contained in packages that should be
-installed in the unboxed library directory. This predicate only
-recognizes files matching `*.el' in top directory of the package
-archive, and excludes `*-pkg.el' and `*-autoloads.el' files, since the
-former are not proper elisp and the latter are not useful in an
+  "Test whether PATH is an elisp library contained in a package that should be \
+installed in the unboxed library directory.  This predicate only \
+recognizes files matching `*.el' in top directory of the package \
+archive, and excludes `*-pkg.el' and `*-autoloads.el' files, since the \
+former are not proper elisp and the latter are not useful in an \
 unboxed installation."
-  (message "Testing for library %s" path)
+;;  (message "Testing for library %s" path)
   (let ((ext (file-name-extension path))
 	(base (file-name-sans-extension (file-name-nondirectory path)))
 	(dir (file-name-directory path)))
@@ -50,9 +51,9 @@ unboxed installation."
 	 (not (string-suffix-p "-autoloads" base)))))
 
 (defun unboxed-data-library-p (path)
-  "Predicate for elisp libraries contained in package data directorys
-that should be compiled there." 
-  (message "Testing for data library %s" path)
+  "Test if PATH is an elisp library contained in a package data directory \
+that should be compiled there."
+;;  (message "Testing for data library %s" path)
   (let ((ext (file-name-extension path))
 	(base (file-name-sans-extension (file-name-nondirectory path)))
 	(dir (file-name-directory path)))
@@ -62,9 +63,9 @@ that should be compiled there."
 
 ;;; modules to install in the package lisp directory
 (defun unboxed-module-p (path)
-  "Predicate for elisp modules contained in packages that should be
-installed in the unboxed library directory." 
-  (message "Testing for module %s" path)
+  "Test if PATH is an elisp modules contained in a package that should be \
+installed in the unboxed library directory."
+;;  (message "Testing for module %s" path)
   (let ((ext (file-name-extension path))
 	(base (file-name-nondirectory path))
 	(dir (file-name-directory path)))
@@ -72,11 +73,11 @@ installed in the unboxed library directory."
 
 ;;; theme files
 (defun unboxed-theme-p (path)
-  "Predicate for elisp libraries contained in packages that should be
-installed in the unboxed theme directory. Any `*-theme.el' file whose
-feature name is not contained in unboxed-theme-libraries variable is
+  "Test if PATH is an elisp library contained in a package that should be \
+installed in the unboxed theme directory.  Any `*-theme.el' file whose \
+feature name is not contained in unboxed-theme-libraries variable is \
 classified as a theme."
-  (message "Testing for theme %s" path)
+;;  (message "Testing for theme %s" path)
   (let ((ext (file-name-extension path))
 	(base (file-name-nondirectory path))
 	(dir (file-name-directory path)))
@@ -86,57 +87,53 @@ classified as a theme."
 
 ;;; info files
 (defun unboxed-info-p (path)
-  "Predicate for files contained in packages that should be installed
-in the unboxed info directory. This predicate recognizes all `*.info'
+  "Test if PATH is a file contained in a package that should be installed \
+in the unboxed info directory.  This predicate recognizes all `*.info' \
 and 'dir' files as info files"
-  (message "Testing for info %s" path)
+;;  (message "Testing for info %s" path)
   (let ((ext (file-name-extension path)))
     (or (and ext (string= ext "info"))
 	(string= (file-name-nondirectory path) "dir"))))
 
 ;;; files to ignore
 (defun unboxed-compiled-elisp-p (path)
-  "Predicate for files contained in packages that should be installed
-in the unboxed info directory. This predicate recognizes all `*.info'
-and 'dir' files as info files"
-  (message "Testing for compiled %s" path)
+  "Test if PATH is a compiled library of some form."
+;;  (message "Testing for compiled %s" path)
   (let ((ext (file-name-extension path)))
     (and ext
 	 (or (string= ext "elc")
 	     (string= ext "eln")))))
 
 (defun unboxed-byte-compiled-p (path)
-  "Predicate for files contained in packages that should be installed
-in the unboxed info directory. This predicate recognizes all `*.info'
-and 'dir' files as info files"
-  (message "Testing for byte-compiled %s" path)
+  "Test if PATH is a byte-compiled library."
+;;  (message "Testing for byte-compiled %s" path)
   (let ((ext (file-name-extension path)))
     (and ext (string= ext "elc"))))
 
 (defun unboxed-native-compiled-p (path)
-  "Predicate for files contained in packages that should be installed
-in the unboxed info directory. This predicate recognizes all `*.info'
-and 'dir' files as info files"
-  (message "Testing for native-compiled %s" path)
+  "Test if PATH is a native-compiled library."
+;;  (message "Testing for native-compiled %s" path)
   (let ((ext (file-name-extension path)))
     (and ext (string= ext "eln"))))
 
 ;;; Anything else
 (defun unboxed-data-p (path)
-  "Predicate for files contained in packages that should be installed
+  "Test if PATH is a file contained in a package that should be installed \
 in the unboxed data directory for the package,
 `<unboxed-data-directory>/<package-name>'.  This predicate is expected
 to be executed last and just returns true."
-  (message "Testing for data %s" path)
+;;  (message "Testing for data %s" path)
   t)
 
 (defun unboxed--function-or-nil (val)
+  "Test if VAL is a function symbol or any non-symbol value."
   (cond
    ((symbolp val)
     (and (fboundp val) (symbol-function val)))
    (t val)))
 
 (defun unboxed--string-or-nil (val)
+  "Test if VAL is a variable or any non-symbol value."
   (cond
    ((symbolp val)
     (and (boundp val) (symbol-value val)))
@@ -151,6 +148,16 @@ to be executed last and just returns true."
 					    finalize-install-name
 					    remove-name
 					    finalize-remove-name)
+  "Create a file category from configuration values.
+CAT
+AREA
+PATH-VAR
+PRED-NAME
+DIR-VAR
+INSTALL-NAME
+FINALIZE-INSTALL-NAME
+REMOVE-NAME
+FINALIZE-REMOVE-NAME"
   (let ((pred (unboxed--function-or-nil pred-name))
 	(dir (unboxed--string-or-nil dir-var))
 	(install (unboxed--function-or-nil install-name))
