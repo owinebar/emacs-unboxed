@@ -292,8 +292,7 @@ directory into location of category CAT."
 
 (defun unboxed--install-rewriting-library-copy (db pd cat file)
   ;; FIXME - predicate should be configurable
-  (if (and (not (unboxed-package-desc-simple pd))
-	   (unboxed--file-grep
+  (if (and (unboxed--file-grep
 	    "load-file-name"
 	    (expand-file-name file (unboxed-package-desc-dir pd))))
       (let ((sym (unboxed--sexpr-db-datadir-patterns db)))
