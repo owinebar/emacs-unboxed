@@ -11,6 +11,7 @@
 
 (setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(async)))
 (setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(yasnippet yasnippet-classic-snippets)))
+(setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(company-coq)))
 (setq tmp3 (unboxed--unbox-package-list-in-db tmp-user-db (mapcar #'car package-alist)))
 
 (setq tmp-txt
@@ -49,6 +50,15 @@
 
 (unboxed--file-grep "load-file-name" (expand-file-name "test/files/should-rewrite.el"))
 (unboxed--file-grep "load-file-name" (expand-file-name "test/files/should-not-rewrite.el"))
+(unboxed--file-grep "load-file-name" (expand-file-name "~/.emacs.d/lisp/sqlite3.el"))
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "~/.emacs.d/lisp/sqlite3.el")
+ (expand-file-name "test/files/sqlite3-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
+(unboxed--sexpr-rewriting-copy
+ (expand-file-name "~/.emacs.d/lisp/auto-complete-rst.el")
+ (expand-file-name "test/files/auto-complete-rst-rewritten.el")
+ (get 'unboxed-user-data-directory-patterns 'unboxed-rewriter))
 
 
 (defun sexpr-start ()

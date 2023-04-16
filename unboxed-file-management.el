@@ -32,12 +32,88 @@
 (require 'unboxed-categories)
 (require 'unboxed-rewrite-sexprs)
 
+
 (defun unboxed--file-grep (re file)
   (with-temp-buffer
     (insert-file-contents file)
     (string-match-p re (buffer-string))))
 
-   
+(defun unboxed--contains-boxed-sexprs-p (db pd cat file)
+  (unboxed--file-grep "load-file-name"
+			  (expand-file-name
+			   file
+			   (unboxed-package-desc-dir pd))))
+
+
+
+(defmacro unboxed--define-buffer-snappers (name buffer-id)
+  "Setup snap functions to capture buffers used for automatic reporting"
+  (let ((start (intern (concat "unboxed--start-" (symbol-name name) "-snap")))
+	(snap (intern (concat "unboxed--snap-" (symbol-name name))))
+	(buffer-var (intern (concat "unboxed--" (symbol-name name) "-buffer-name")))
+	(pos-var (intern (concat "unboxed--" (symbol-name name) "-pos"))))
+    `(progn
+       (defvar ,buffer-var ,buffer-id)
+       (defvar ,pos-var nil)
+       (defun ,start ()
+	 (setq ,pos-var nil)
+	 (when ,buffer-var
+	   (let ((b (get-buffer ,buffer-var)))
+	     (setq ,pos-var
+		   (when b
+		     (with-current-buffer b (point))))))
+	 ,pos-var)
+       (defun ,snap ()
+	 (let (r b)
+	   (when (and ,buffer-var ,pos-var)
+	     (setq b (get-buffer ,buffer-var)
+		   r (when b
+		       (with-current-buffer b
+			 (buffer-substring ,pos-var (point))))))
+	   (setq ,pos-var nil)
+	   r)))))
+
+(unboxed--define-buffer-snappers log byte-compile-log-buffer)
+(unboxed--define-buffer-snappers msgs "*Messages*")
+(unboxed--define-buffer-snappers warns "*Warnings*")
+
+(defmacro unboxed--start-snaps (&rest names)
+  `(progn
+     ,@(mapcar (lambda (name)
+		 `(,(intern (concat "unboxed--start-"
+				    (symbol-name name)
+				    "-snap"))))
+	       names)))
+
+(defmacro unboxed--with-snaps (names &rest body)
+  `(let (
+	 ,@(mapcar (lambda (name)
+		     `(,name
+		       (,(intern (concat "unboxed--snap-"
+					 (symbol-name name))))))
+		   names)
+	 )
+     ,@body))
+      
+(defun unboxed--make-rewrite-boxed-sexprs (db pd cat file)
+  (let ((data-directory-val
+	 (list
+	  (file-name-concat
+	   (unboxed--sexpr-db-category-location db 'data)
+	   (symbol-name (unboxed-package-desc-name pd))))))
+    (lambda (sexpr)
+      (pcase sexpr
+	(`(file-name-directory load-file-name) data-directory-val)
+	(`(file-name-directory (or load-file-name . ,rest))
+	 data-directory-val)
+	(`(file-name-directory
+	   (or . ,(and (pred listp)
+		       ls
+		       (guard (memq 'load-file-name ls)))))
+	 data-directory-val)
+	(_ nil)))))
+
+
 (defun unboxed--install-info-file-in-dir (installed-file)
   "Install info file from INSTALLED-FILE.
 Utility for creating entry for an unboxed package info file in the dir file \
@@ -101,46 +177,81 @@ FILENAME - file name being installed, or nil if none"
   (let ((el-name (file-name-nondirectory file))
 	logfile-base
 	logfile
+	warnfile
+	msgfile	
+	sys-lp
+	lp
+	load-sexprs
 	log-text
+	warn-text
+	msg-text
 	elc-name
 	elc-path
 	result
 	proc
 	proc-result)
+    (while ls
+      (push `(load ,(pop ls)) load-sexprs))
     (setq logfile-base (file-name-sans-extension el-name)
-	  logfile (let ((temporary-file-directory unboxed-temp-directory))
-		    (make-temp-file
-		     (concat "compile-log--" logfile-base "-")))
+	  logfile (unboxed--make-install-logfile "compile-log" nil logfile-base)
+	  warnfile (unboxed--make-install-logfile "warnings" nil logfile-base)
+	  msgfile (unboxed--make-install-logfile "messages" nil logfile-base)
+	  sys-lp (unboxed--area-system-load-path area)
+	  lp (append libdirs sys-lp)
 	  el-path (expand-file-name el-name)
 	  elc-path  (if (string= (file-name-extension el-path) "el")
 			(concat el-path "c")
 		      (concat el-path ".elc"))
 	  program
 	  `(lambda ()
-	     (require 'bytecomp)
-	     (setq load-path ',load-path)
-	     (defvar logtext nil)
-	     (when (file-exists-p ,elc-path)
-	       (delete-file ,elc-path))
-	     (byte-compile-file ,el-path)
+	     (condition-case nil
+		 (progn
+		   (require 'bytecomp)
+		   (setq load-path ',lp)
+		   ,@load-sexprs
+		   (when (file-exists-p ,elc-path)
+		     (delete-file ,elc-path))
+		   (byte-compile-file ,el-path))
+	       (error nil))
 	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
 	       (when log-buffer
 		 (with-current-buffer log-buffer
-		   (setq logtext (buffer-string))
 		   (write-region (point-min) (point-max) ,logfile))))
-	     (if (> (length logtext) 0)
-		 logtext
-	       t)))
+	     (let ((log-buffer (get-buffer "*Warnings*")))
+	       (when log-buffer
+		 (with-current-buffer log-buffer
+		   (write-region nil nil ,warnfile))))
+	     (let ((log-buffer (get-buffer "*Messages*")))
+	       (when log-buffer
+		 (with-current-buffer log-buffer
+		   (write-region nil nil ,msgfile))))
+	     t))
     (setq proc (async-start program nil))
     (setq proc-result (async-get proc))
-    (with-temp-buffer
-      (insert-file-contents logfile)
-      (setq log-text (buffer-string)))
-    (when (file-exists-p elc-path)
-      (setq result log-text))
     (when (file-exists-p logfile)
+      (with-temp-buffer
+	(insert-file-contents logfile)
+	(setq log-text (buffer-string)))
       (delete-file logfile))
-    result))
+    (when (file-exists-p warnfile)
+      (with-temp-buffer
+	(insert-file-contents warnfile)
+	(setq warn-text (buffer-string)))
+      (delete-file warnfile))
+    (when (file-exists-p msgfile)
+      (with-temp-buffer
+	(insert-file-contents msgfile)
+	(setq msg-text (buffer-string)))
+      (delete-file msgfile))
+    (unboxed--with-snaps
+     (log msgs warns)
+     (setf (unboxed-installed-file-log inst) log)
+     (setf (unboxed-installed-file-warnings inst) warns)
+     (setf (unboxed-installed-file-messages inst) msgs))
+    `((compiled ,(file-exists-p elc-path))
+      (messages (host ,msgs) (sandbox ,msg-text))
+      (warnings (host ,warns) (sandbox ,warn-text))
+      (log (host ,log) (sandbox ,log-text)))))
 
 (defun unboxed--async-byte-compile-library (db installed-file)
   "Byte-compile library file of INSTALLED-FILE for package in DB in \
@@ -160,65 +271,109 @@ a package may capture their value in an `eval-when-compile' form.
   unboxed packages
   `unboxed-package-data-directory' Package-specific directory \
   containing any other installed files from this package."
-  (let ((area (unboxed--sexpr-db-area db))
-	(cats (unboxed--sexpr-db-categories db))
-	(pkg-name (unboxed-installed-file-package installed-file))
-	(pkg-version (unboxed-installed-file-package-version-string installed-file))
-	(pkg-loc (unboxed-installed-file-package-location installed-file))
-	(cat (unboxed-installed-file-category installed-file))
-	(cat-loc (unboxed-installed-file-category-location installed-file))
-	(src (unboxed-installed-file-package-source installed-file))
-	(lib (unboxed-installed-file-file installed-file))
-	(libdir (unboxed--sexpr-db-category-location db 'library))
-	(themedir (unboxed--sexpr-db-category-location db 'theme))
-	(infodir (unboxed--sexpr-db-category-location db 'info))
-	(datadir (unboxed--sexpr-db-category-location db 'data))
-	(elc-installed (unboxed-installed-file-struct-copy installed-file))
-	logfile-base logfile log-text el-name elc-name elc-path result
-	proc proc-result)
-    (setq logfile (unboxed--make-install-logfile "compile-log" pkg-name lib)
-	  datadir (file-name-concat datadir (symbol-name pkg-name))
-	  el-name lib
-	  elc-name  (if (string= (file-name-extension el-name) "el")
-			(concat el-name "c")
-		      (concat el-name ".elc"))
-	  el-path (file-name-concat cat-loc el-name)
-	  elc-path (file-name-concat cat-loc elc-name)
-	  program
-	  `(lambda ()
-	     (require 'bytecomp)
-	     (setq load-path ',load-path)
-	     (setq unboxed-package ',pkg-name)
-	     (setq unboxed-package-version ,pkg-version)
-	     (setq unboxed-package-box ,pkg-loc)
-	     (setq unboxed-library-directory ,libdir)
-	     (setq unboxed-theme-directory ,themedir)
-	     (setq unboxed-info-directory ,infodir)
-	     (setq unboxed-package-data-directory ,datadir)
-	     (setq elc-name ,elc-name)
-	     (setq cat-loc ,cat-loc)
-	     (setq el-path ,el-path)
-	     (setq elc-path ,elc-path)
-	     (when (file-exists-p elc-path)
-	       (delete-file elc-path))
-	     (byte-compile-file el-path)
-	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
-	       (when log-buffer
-		 (with-current-buffer log-buffer
-		   (write-region (point-min) (point-max) ,logfile))))))
-    (setf (unboxed-installed-file-file elc-installed) elc-name)
-    (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
-    (setq proc (async-start program nil))
-    (setq proc-result (async-get proc))
-    (with-temp-buffer
-      (insert-file-contents logfile)
-      (setq log-text (buffer-string)))
-    (when (file-exists-p elc-path)
+  (when (unboxed-installed-file-created installed-file)
+    (unboxed--start-snaps log msgs warns)
+    (let ((area (unboxed--sexpr-db-area db))
+	  (cats (unboxed--sexpr-db-categories db))
+	  (pkg-name (unboxed-installed-file-package installed-file))
+	  (pkg-version (unboxed-installed-file-package-version-string installed-file))
+	  (pkg-loc (unboxed-installed-file-package-location installed-file))
+	  (cat (unboxed-installed-file-category installed-file))
+	  (cat-loc (unboxed-installed-file-category-location installed-file))
+	  (src (unboxed-installed-file-package-source installed-file))
+	  (lib (unboxed-installed-file-file installed-file))
+	  (libdir (unboxed--sexpr-db-category-location db 'library))
+	  (themedir (unboxed--sexpr-db-category-location db 'theme))
+	  (infodir (unboxed--sexpr-db-category-location db 'info))
+	  (datadir (unboxed--sexpr-db-category-location db 'data))
+	  (elc-installed (unboxed-installed-file-struct-copy installed-file))
+	  (autoloads (unboxed--scoped-autoloads db))
+	  (lp-libdirs (unboxed--scoped-libdirs db))
+	  logfile-base logfile log-text warn-text msg-text
+	  el-name elc-name elc-path result warnfile msgfile
+	  proc proc-result sys-lp lp load-sexprs)
+      (setq logfile (unboxed--make-install-logfile "compile-log" pkg-name lib)
+	    warnfile (unboxed--make-install-logfile "warnings" pkg-name lib)
+	    msgfile (unboxed--make-install-logfile "messages" pkg-name lib)
+	    datadir (file-name-concat datadir (symbol-name pkg-name))
+	    sys-lp (unboxed--area-system-load-path area)
+	    lp (append lp-libdirs sys-lp)
+	    load-sexprs (mapcar (lambda (alfn) `(load ,alfn)) autoloads)
+	    el-name lib
+	    elc-name  (if (string= (file-name-extension el-name) "el")
+			  (concat el-name "c")
+			(concat el-name ".elc"))
+	    el-path (file-name-concat cat-loc el-name)
+	    elc-path (file-name-concat cat-loc elc-name)
+	    program
+	    `(lambda ()
+	       (condition-case nil
+		   (progn
+		     (require 'bytecomp)
+		     (setq load-path ',lp
+			   unboxed-package ',pkg-name
+			   unboxed-package-version ,pkg-version
+			   unboxed-package-box ,pkg-loc
+			   unboxed-library-directory ,libdir
+			   unboxed-theme-directory ,themedir
+			   unboxed-info-directory ,infodir
+			   unboxed-package-data-directory ,datadir)
+		     ;; ensure prompts during byte-compiling cause failure and do not just hang
+		     (defun yes-or-no-p (prompt)
+		       (error "Interactive yes-or-no-p prompting not allowed in batch compile mode - %S" prompt))
+		     (defun y-or-n-p (prompt)
+		       (error "Interactive y-or-n-p prompting not allowed in batch compile mode - %S" prompt))
+		     (defun y-or-n-p-with-timeout (prompt seconds default)
+		       (error "Interactive y-or-n-p-with-timeout prompting not allowed in batch compile mode - %S %S %S"
+			      prompt seconds default))
+		     (when (file-exists-p ,elc-path)
+		       (delete-file ,elc-path))
+		     ,@load-sexprs
+		     (byte-compile-file ,el-path))
+		 (error nil))
+	       (let ((log-buffer (get-buffer byte-compile-log-buffer)))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,logfile))))
+	       (let ((log-buffer (get-buffer "*Warnings*")))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,warnfile))))
+	       (let ((log-buffer (get-buffer "*Messages*")))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,msgfile))))))
+      (setf (unboxed-installed-file-file elc-installed) elc-name)
+      (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
+      (setq proc (async-start program nil))
+      (setq proc-result (async-get proc))
+      (setf (unboxed-installed-file-created elc-installed)
+	    (file-exists-p elc-path))
+      (when (file-exists-p logfile)
+	(with-temp-buffer
+	  (insert-file-contents logfile)
+	  (setq log-text (buffer-string)))
+	(delete-file logfile))
+      (when (file-exists-p warnfile)
+	(with-temp-buffer
+	  (insert-file-contents warnfile)
+	  (setq warn-text (buffer-string)))
+	(delete-file warnfile))
+      (when (file-exists-p msgfile)
+	(with-temp-buffer
+	  (insert-file-contents msgfile)
+	  (setq msg-text (buffer-string)))
+	(delete-file msgfile))
+      (unboxed--with-snaps
+       (log msgs warns)
+       (setq log-text (format "Host\n%s\nCompile Process\n%s" log log-text))
+       (setq warn-text (format "Host\n%s\nCompile Process\n%s" warns warn-text))
+       (setq msg-text (format "Host\n%s\nCompile Process\n%s" msgs msg-text)))
       (setf (unboxed-installed-file-log elc-installed) log-text)
-      (setq result `(,elc-installed)))
-    (when (file-exists-p logfile)
-      (delete-file logfile))
-    result))
+      (setf (unboxed-installed-file-warnings elc-installed) warn-text)
+      (setf (unboxed-installed-file-messages elc-installed) msg-text))
+    '(,elc-installed)))
+
 
 ;;; install-action must take four arguments -
 ;;;  the package name as a symbol
@@ -254,11 +409,6 @@ using INSTALL-ACTION."
     (setq installed (nreverse installed-files))
     installed))
 
-<<<<<<< HEAD
-(defun unboxed--install-simple-copy (db pd cat file)
-  "Install action to perform a simple copy of FILE from DB package PD \
-directory into location of category CAT."
-=======
 (defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred)
   (with-temp-buffer
     (insert-file-contents src)
@@ -269,7 +419,7 @@ directory into location of category CAT."
   (copy-file src dest t))
 
 (defun unboxed--install-copy (db pd cat file copy-action &optional aux)
->>>>>>> 8d7defa8ccb1bb67ea4bc2fbbb69bbcb6993dd4c
+  (unboxed--start-snaps log msgs warns)
   (let ((version (unboxed-package-desc-version-string pd))
 	(pkg (unboxed-package-desc-name pd))
 	(cname (unboxed-file-category-name cat))
@@ -287,24 +437,28 @@ directory into location of category CAT."
 					 :category cname
 					 :category-location dst-loc
 					 :file dst-file
-					 :package-source file))
+					 :package-source file
+					 :created (file-exists-p dest)))
+    (unboxed--with-snaps
+     (log msgs warns)
+     (setf (unboxed-installed-file-log inst) log)
+     (setf (unboxed-installed-file-warnings inst) warns)
+     (setf (unboxed-installed-file-messages inst) msgs))
     `(,inst)))
 
 (defun unboxed--install-rewriting-library-copy (db pd cat file)
-  ;; FIXME - predicate should be configurable
-  (if (and (unboxed--file-grep
-	    "load-file-name"
-	    (expand-file-name file (unboxed-package-desc-dir pd))))
-      (let ((sym (unboxed--sexpr-db-datadir-patterns db)))
-	(unboxed--install-copy
-	 db pd cat file
-	 #'unboxed--sexpr-rewriting-copy
-	 (get sym 'unboxed-rewriter)))
+  (if (unboxed--contains-boxed-sexprs-p db pd cat file)
+      (unboxed--install-copy
+       db pd cat file
+       #'unboxed--sexpr-rewriting-copy
+       (unboxed--make-rewrite-boxed-sexprs db pd cat file))
     (unboxed--install-copy
      db pd cat file
      #'unboxed--simple-copy)))
 
 (defun unboxed--install-simple-copy (db pd cat file)
+  "Install action to perform a simple copy of FILE from DB package PD \
+directory into location of category CAT."
   (unboxed--install-copy db pd cat file #'unboxed--simple-copy))
 
 (defun unboxed--install-pkg-relative-copy (db pd cat file)
@@ -391,12 +545,8 @@ directory into package-specific subdirectory of location of category CAT."
   (unboxed--install-list 'theme db pd files #'unboxed--install-simple-copy))
   
 (defun unboxed-install-library (db pd files)
-<<<<<<< HEAD
   "Install library files FILES for package PD of DB."
-  (unboxed--install-list 'library db pd files #'unboxed--install-simple-copy))
-=======
   (unboxed--install-list 'library db pd files #'unboxed--install-rewriting-library-copy))
->>>>>>> 8d7defa8ccb1bb67ea4bc2fbbb69bbcb6993dd4c
 
 (defun unboxed-install-module (db pd files)
   "Install module (shared library) files FILES for package PD of DB."

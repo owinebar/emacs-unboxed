@@ -28,6 +28,98 @@
 
 (require 'package)
 
+(defvar unboxed--buffer-name "*Unboxed*"
+  "Name of unboxed logging buffer")
+
+(defvar unboxed--buffer (get-buffer-create unboxed--buffer-name)
+  "The unboxed logging buffer")
+
+(cl-defstruct (unboxed--active-table
+	       (:constructor unboxed--active-table-create)
+	       (:copier unboxed--active-table-copy))
+  "Structure describing the table of active jobs and associated lists
+  Slots:
+   `slots' vector of active descriptors
+   `first-used' index of the first entry in the list of slots in use
+   `last-used' index of the last entry in the list of slots in use
+   `first-free' index of first entry in the list of slots not in use
+   `last-free'  index of last entry in list of slots free
+   `poll-freq'  time between polling in use entries for completed jobs
+"
+  slots
+  first-used
+  last-used
+  first-free
+  last-free
+  poll-freq)
+
+
+(cl-defstruct (unboxed--active
+	       (:constructor unboxed--active-create)
+	       (:copier unboxed--active-copy))
+  "Structure for tracking running jobs
+  Slots:
+   `job' An unboxed--job struct or nil if free
+   `next' Integer of next entry in list this entry is part of (free or in-use)
+   `prev' Integer of previous entry in list this entry is part of
+"
+  job
+  next
+  prev)
+
+(defun unboxed--make-active-table (N freq)
+  "Creates an active table and all the structures that will be allocated
+for tracking the processor slots that can be used"
+  (let ((tbl (unboxed--active-table-create
+	      :slots (make-vector N)
+	      :first-used nil
+	      :last-used nil
+	      :first-free 0
+	      :last-free (1- N)
+	      :poll-freq freq))
+	(i 0)
+	(prev nil)
+	(next 1)
+	slots a)
+    (setq slots (unboxed--active-table-slots tbl))
+    (while (< i N)
+      (setq a (unboxed--active-create
+	       :job nil
+	       :next next
+	       :prev prev)
+	    prev i
+	    i next)
+      (cl-incf next)
+      (aset slots prev a))
+    (setf (unboxed--active-next a) nil)
+    tbl))
+
+	
+  
+(cl-defstruct (unboxed--job
+	       (:constructor unboxed--job-create)
+	       (:copier unboxed--job-copy))
+  "Structure for jobs unboxed has started.  Callbacks take job struct as first argument.
+  Slots:
+   `id' Identifier
+   `program' Elisp program run in the job
+   `started' start time
+   `max-time' maximum wall clock time to allow run, nil for no limit
+   `future' object representing the async process
+   `ended' time result was ready or job terminated
+   `result' nil if timed out, singleton list holding return value otherwise
+   `succeed' callback function to use when results are available
+   `fail' callback function to use when process times out."
+  id
+  program
+  started
+  max-time
+  future
+  ended
+  result
+  succeed
+  fail)
+
 (cl-defstruct (unboxed--area
 	       (:constructor unboxed--area-create)
 	       (:copier unboxed--area-copy))
@@ -45,6 +137,7 @@ or site packages
   `datadir-pats' Data directory pcase patterns for rewriting
   `patches' Package-specific patches in this area
   `autoloads-file' Name of generated autoloads file for unboxed libraries
+  `system-load-path' load-path set in \"emacs -Q\" invocation 
   `categories' Assoc list of file-categories."
   name
   boxes
@@ -56,7 +149,16 @@ or site packages
   datadir-pats
   patches
   autoloads-file
+  system-load-path
   categories)
+
+(defun unboxed--area-category-location (area catname)
+  (let ((cats (unboxed--area-categories area))
+	result)
+    (setq result (assq catname cats)
+	  result (and result
+		      (unboxed-file-category-location (cdr result))))
+    result))
 
 ;; note - it's entirely possible for a site to have one version of unboxed installed
 ;; and for a user to have another version installed.  Therefore, we record
@@ -153,7 +255,10 @@ Other than predicate, the function slots may be nil.
 (cl-defstruct (unboxed-installed-file
                (:constructor unboxed-installed-file-create)
 	       (:copier unboxed-installed-file-struct-copy))
-  "Structure for a file that is installed for a package
+  "Structure for a file that is installed for a package.
+An installed-file record may be created even if the installation of
+the file failed, so that the messages/warnings/log will be kept
+for reference.
   Slots:
   `area' name of the unboxing area
   `package' name of package as symbol
@@ -165,8 +270,11 @@ Other than predicate, the function slots may be nil.
   `file' location of file relative to category-location
          may not be identical to source file, or even have the same
          base name, e.g. byte-compiled files
+  `created' boolean indicated whether installing this file succeeded
   `log' Any relevant data generated during the installation process
-        for this specific file"
+        for this specific file
+  `warnings' *Warnings* buffer during install process
+  `messages' *Messages* buffer during install process"
   area
   package
   package-version-string
@@ -175,7 +283,11 @@ Other than predicate, the function slots may be nil.
   category-location
   package-source
   file
-  log)
+  created
+  log
+  warnings
+  messages)
+
 
 (cl-defstruct (unboxed--struct-layout
                (:constructor unboxed--struct-layout-create)
@@ -335,6 +447,18 @@ and recursing on lists until a list of strings is produced."
    ((boundp v) (symbol-value v))
    (t nil)))
 
+(defun unboxed--system-load-path ()
+  (let ((system-dir (file-name-directory (directory-file-name data-directory)))
+	(ls (reverse load-path))
+	lisp-dir r)
+    (setq lisp-dir (file-name-concat system-dir "lisp"))
+    (when ls
+      (push (pop ls) r)
+      (while (and ls (not (string= (directory-file-name (car r)) lisp-dir)))
+	(push (pop ls) r)))
+    r))
+	
+   
 (defun unboxed--make-area (name
 			   boxes-conf
 			   db-path-conf
@@ -363,8 +487,7 @@ CATS"
 	(theme-libs (unboxed--resolve-conf-val theme-libs-conf))
 	;(datadir (unboxed--resolve-conf-val datadir-conf))
 	(patches (unboxed--resolve-conf-val patches-conf))
-	(autoloads-fn (unboxed--resolve-conf-val autoloads-conf))
-	excluded-regex)
+	(autoloads-fn (unboxed--resolve-conf-val autoloads-conf)))
     (unboxed--area-create
      :name name
      :boxes boxes
@@ -377,6 +500,7 @@ CATS"
      :datadir-pats datadir-conf
      :patches patches
      :autoloads-file autoloads-fn
+     :system-load-path (unboxed--system-load-path)
      :categories cats)))
 
 

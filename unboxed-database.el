@@ -104,6 +104,29 @@ the pre-existing package-desc"
       (push pr areas)))
   areas)
 
+(defun unboxed--scoped-libdirs (db)
+  (let ((scoped-areas
+	 (unboxed--scoped-areas
+	  (unboxed--area-name (unboxed--sexpr-db-area db))
+	  (unboxed--sexpr-db-areas db)))
+	libdirs)
+    (setq libdirs
+	  (mapcar (lambda (a)
+		    (unboxed--area-category-location a 'library))
+		  scoped-areas))
+    libdirs))
+
+(defun unboxed--scoped-autoloads (db)
+  (let ((scoped-areas
+	 (unboxed--scoped-areas
+	  (unboxed--area-name (unboxed--sexpr-db-area db))
+	  (unboxed--sexpr-db-areas db)))
+	als)
+    (setq als
+	  (mapcar (lambda (a)
+		    (unboxed--area-autoloads-file a))
+		  scoped-areas))
+    (nreverse als)))
 
 (defun unboxed--excluded-package-regex (ls)
   (let (re-ls syms re e)
@@ -285,7 +308,7 @@ the pre-existing package-desc"
 		    text))
 	(with-temp-buffer
 	  (insert text)
-	  (write-region (point-min) (point-max) al-fn))))))
+	  (write-region nil nil al-fn))))))
 
 (defun unboxed--create-sexpr-db (area-name areas)
   "Create an unboxed db in the sexpr format - initialize from package-desc
