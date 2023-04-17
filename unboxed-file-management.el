@@ -34,11 +34,18 @@
 
 
 (defun unboxed--file-grep (re file)
+  "Test whether FILE contains regular expression RE."
   (with-temp-buffer
     (insert-file-contents file)
     (string-match-p re (buffer-string))))
 
 (defun unboxed--contains-boxed-sexprs-p (db pd cat file)
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location"
   (unboxed--file-grep "load-file-name"
 			  (expand-file-name
 			   file
@@ -46,8 +53,13 @@
 
 
 
-(defmacro unboxed--define-buffer-snappers (name buffer-id)
-  "Setup snap functions to capture buffers used for automatic reporting"
+(defmacro unboxed--define-buffer-snapper (name buffer-id)
+  "Set up snap functions to capture buffers used for automatic reporting.
+Arguments:
+  NAME - symbol for the snapshot
+  BUFFER-ID - name of buffer that will be snapshotted
+Creates functions `unboxed--start-<name>-snap' and `unboxed--snap-<name>' that
+record the buffer position and the buffer text respectively."
   (let ((start (intern (concat "unboxed--start-" (symbol-name name) "-snap")))
 	(snap (intern (concat "unboxed--snap-" (symbol-name name))))
 	(buffer-var (intern (concat "unboxed--" (symbol-name name) "-buffer-name")))
@@ -73,11 +85,12 @@
 	   (setq ,pos-var nil)
 	   r)))))
 
-(unboxed--define-buffer-snappers log byte-compile-log-buffer)
-(unboxed--define-buffer-snappers msgs "*Messages*")
-(unboxed--define-buffer-snappers warns "*Warnings*")
+(unboxed--define-buffer-snapper log byte-compile-log-buffer)
+(unboxed--define-buffer-snapper msgs "*Messages*")
+(unboxed--define-buffer-snapper warns "*Warnings*")
 
 (defmacro unboxed--start-snaps (&rest names)
+  "Start snapshoting NAMES."
   `(progn
      ,@(mapcar (lambda (name)
 		 `(,(intern (concat "unboxed--start-"
@@ -86,6 +99,7 @@
 	       names)))
 
 (defmacro unboxed--with-snaps (names &rest body)
+  "Snapshot NAMES and bind in BODY."
   `(let (
 	 ,@(mapcar (lambda (name)
 		     `(,name
@@ -96,6 +110,12 @@
      ,@body))
       
 (defun unboxed--make-rewrite-boxed-sexprs (db pd cat file)
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location"
   (let ((data-directory-val
 	 (list
 	  (file-name-concat
@@ -410,15 +430,25 @@ using INSTALL-ACTION."
     installed))
 
 (defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred)
+  "Rewrite file SRC to DEST using SEXPR-PRED".
   (with-temp-buffer
     (insert-file-contents src)
     (unboxed--pcase-replace-sexpr sexpr-pred)
     (write-region nil nil dest)))
 
 (defun unboxed--simple-copy (src dest &optional aux)
+  "Copy file SRC to DEST.  AUX data is ignored."
   (copy-file src dest t))
 
 (defun unboxed--install-copy (db pd cat file copy-action &optional aux)
+  "Installs file into CAT location using COPY-ACTION and AUX data.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location
+  COPY-ACTION - function with arguments (SOURCE DEST AUX)
+  AUX - optional data to be passed to COPY-ACTION"
   (unboxed--start-snaps log msgs warns)
   (let ((version (unboxed-package-desc-version-string pd))
 	(pkg (unboxed-package-desc-name pd))
@@ -447,6 +477,12 @@ using INSTALL-ACTION."
     `(,inst)))
 
 (defun unboxed--install-rewriting-library-copy (db pd cat file)
+  "Installs file into CAT location with rewriting if needed.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location"
   (if (unboxed--contains-boxed-sexprs-p db pd cat file)
       (unboxed--install-copy
        db pd cat file
@@ -456,14 +492,22 @@ using INSTALL-ACTION."
      db pd cat file
      #'unboxed--simple-copy)))
 
-(defun unboxed--install-simple-copy (db pd cat file)
-  "Install action to perform a simple copy of FILE from DB package PD \
-directory into location of category CAT."
+(defun unboxed--install-simple-copy (db pd cat file) 
+  "Copies file into CAT location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location"
   (unboxed--install-copy db pd cat file #'unboxed--simple-copy))
 
 (defun unboxed--install-pkg-relative-copy (db pd cat file)
-  "Install action to perform a relative copy of FILE from DB package PD \
-directory into package-specific subdirectory of location of category CAT."
+  "Installs file in package-specific subdirectory of CAT.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location"
   (let ((version (unboxed-package-desc-version-string pd))
 	(pkg (unboxed-package-desc-name pd))
 	(cname (unboxed-file-category-name cat))
@@ -491,7 +535,12 @@ directory into package-specific subdirectory of location of category CAT."
 ;;; "files" here are installed-file structs
 ;;; remove-action takes the same arguments as an install-cation
 (defun unboxed--remove-list (db files remove-action)
-  "Remove list of files FILES from DB using REMOVE-ACTION function."
+  "Remove list of files FILES from DB using REMOVE-ACTION function.
+Arguments:
+  DB - unboxed database
+  FILES - installed-files in DB area
+  REMOVE-ACTION - function with arguments
+     (PD CAT FILE BOXED-LOCATION UNBOXED-LOCATION)"
   (let ((ls files)
 	cat
 	cat-loc
@@ -525,7 +574,12 @@ directory into package-specific subdirectory of location of category CAT."
     deleted))
 
 (defun unboxed--remove-simple-delete (pkg cat file src-loc dst-loc)
-  "Delete FILE of category CAT installed in DST-LOC from package PKG."
+  "Delete FILE of category CAT installed in DST-LOC from package PKG.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILE - file in package's boxed location"
   (let ((dest (file-name-concat dst-loc (file-name-non-directory file)))
 	(src (file-name-concat src-loc file)))
     (condition-case nil
@@ -541,31 +595,59 @@ directory into package-specific subdirectory of location of category CAT."
 ;;; category for a specific package
 ;;; file names are given as relative paths to the package directory
 (defun unboxed-install-theme (db pd files)
-  "Install theme files FILES for package PD of DB."
+  "Install theme files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   (unboxed--install-list 'theme db pd files #'unboxed--install-simple-copy))
   
 (defun unboxed-install-library (db pd files)
-  "Install library files FILES for package PD of DB."
+  "Install library files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   (unboxed--install-list 'library db pd files #'unboxed--install-rewriting-library-copy))
 
 (defun unboxed-install-module (db pd files)
-  "Install module (shared library) files FILES for package PD of DB."
+  "Install module (shared library) files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   (unboxed--install-list 'module db pd files #'unboxed--install-simple-copy))
 
 (defun unboxed-install-info (db pd files)
-  "Install info files FILES for package PD of DB."
+  "Install info files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   (unboxed--install-list 'info db pd files #'unboxed--install-simple-copy))
 
 (defun unboxed-install-byte-compiled (db pd files)
-  "Install (discard) byte-compiled files FILES for package PD of DB."
+  "Install (discard) byte-compiled files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   nil)
 
 (defun unboxed-install-native-compiled (db pd files)
-  "Install (discard) byte-compiled files FILES for package PD of DB."
+  "Install (discard) byte-compiled files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   nil)
 
 (defun unboxed-install-data (db pd files)
-  "Install residual files FILES for package PD of DB in package data directory."
+  "Install residual files FILES for package PD of DB in package data directory.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - file paths relateive to boxed directory of PD"
   (let ((area (unboxed--sexpr-db-area db))
 	(loc (unboxed-file-category-location
 	      (cdr (assoc 'data
@@ -591,31 +673,59 @@ directory into package-specific subdirectory of location of category CAT."
 
 ;;; These removers are used for lists of installed files
 (defun unboxed-remove-theme (db pd files)
-  "Remove theme files FILES for package PD of DB."
+  "Remove theme files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   (unboxed--remove-list db files #'unboxed--remove-simple-delete))
   
 (defun unboxed-remove-library (db pd files)
-  "Remove library files FILES for package PD of DB."
+  "Remove library files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
 (defun unboxed-remove-byte-compiled (db pd files)
-  "Remove byte-compiled files FILES for package PD of DB."
+  "Remove byte-compiled files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   nil)
 
 (defun unboxed-remove-native-compiled (db pd files)
-  "Remove native-compiled files FILES for package PD of DB."
+  "Remove native-compiled files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   nil)
 
 (defun unboxed-remove-module (db pd files)
-  "Remove module (shared library) files FILES for package PD of DB."
+  "Remove module (shared library) files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
 (defun unboxed-remove-info (db pd files)
-  "Remove info files FILES for package PD of DB."
+  "Remove info files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
 (defun unboxed-remove-data (db pd files)
-  "Remove data files FILES for package PD of DB."
+  "Remove data files FILES for package PD of DB.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  FILES - installed files from PD"
   (unboxed--remove-list db files #'unboxed--remove-simple-delete))
 
 
@@ -633,6 +743,12 @@ directory into package-specific subdirectory of location of category CAT."
 ;; the libraries
 (defun unboxed-finalize-install-library (db cat files)
   "Finalize installation of library files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   (let ((loc (unboxed-file-category-location cat))
 	(area (unboxed--sexpr-db-area db))
 	autoloads-fn autoloads-file result ls
@@ -659,15 +775,33 @@ directory into package-specific subdirectory of location of category CAT."
 
 (defun unboxed-finalize-install-byte-compiled (db cat files)
   "Finalize installation of byte-compiled files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-install-native-compiled (db cat files)
   "Finalize installation of native-compiled files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 ;; rebuild the directory file
 (defun unboxed-finalize-install-info (db cat files)
   "Finalize installation of info files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   (let ((ls files)
 	file)
     (while ls
@@ -678,42 +812,101 @@ directory into package-specific subdirectory of location of category CAT."
 ;; other categories require no additional work
 (defun unboxed-finalize-install-module (db cat files)
   "Finalize installation of module files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-install-data (db cat files)
   "Finalize installation of data files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-install-theme (db cat files)
   "Finalize installation of theme files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-remove-theme (db cat files)
   "Finalize removal of theme files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
   
 (defun unboxed-finalize-remove-library (db cat files)
   "Finalize removal of library files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-remove-byte-compiled (db cat files)
   "Finalize removal of byte-compiled files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-remove-native-compiled (db cat files)
   "Finalize removal of native-compiled files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-remove-module (db cat files)
   "Finalize removal of module files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-remove-info (db cat files)
   "Finalize removal of info files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  PD - unboxed package descriptor
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 (defun unboxed-finalize-remove-data (db cat files)
   "Finalize removal of data files FILES in category CAT of DB."
+  "Test whether FILE contains a sexp referencing the package's location.
+Arguments:
+  DB - unboxed database
+  CAT - category name
+  FILES - files in the category's location"
   nil)
 
 	
