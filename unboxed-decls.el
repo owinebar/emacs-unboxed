@@ -68,6 +68,7 @@ or site packages
   categories)
 
 (defun unboxed--area-category-location (area catname)
+  "Return the location for category CATNAME in AREA."
   (let ((cats (unboxed--area-categories area))
 	result)
     (setq result (assq catname cats)
@@ -331,11 +332,13 @@ installation manager
 	    unboxed-file-category
 	    unboxed-package-desc
 	    unboxed-installed-file))
-  "Association list of layout descriptors of the structs used in unboxed database files.")
+  "Association list of layout descriptors.
+Specifies the structs used in unboxed database files.")
 
 (defun unboxed--resolve-conf-list (v)
-  "Resolve V to a string or list of strings by treating symbols as variables \
-and recursing on lists until a list of strings is produced."
+  "Resolve V to a string or list of strings.
+Treats symbols as variables, recurses on lists
+until a list of strings is produced."
   (cond
    ((listp v) (mapcan #'unboxed--resolve-conf-list v))
    ((stringp v)   (list v))
@@ -363,6 +366,7 @@ and recursing on lists until a list of strings is produced."
    (t nil)))
 
 (defun unboxed--system-load-path ()
+  "Construct the `load-path' used by \"emacs -Q\" process."
   (let ((system-dir (file-name-directory (directory-file-name data-directory)))
 	(ls (reverse load-path))
 	lisp-dir r)
@@ -430,8 +434,8 @@ CATS"
 
 (provide 'unboxed-decls)
 ;;; unboxed-decls.el ends here
+
 ;; Local Variables:
 ;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
 ;; End:
 
-;; 
