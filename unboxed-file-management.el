@@ -34,13 +34,13 @@
 
 
 (defun unboxed--file-grep (re file)
-  "Test whether FILE contains regular expression RE."
+  "Test whether FILE matches regular expression RE."
   (with-temp-buffer
     (insert-file-contents file)
     (string-match-p re (buffer-string))))
 
 (defun unboxed--contains-boxed-sexprs-p (db pd cat file)
-  "Test whether FILE contains a sexp referencing the package's location.
+  "Test whether FILE matches a sexp referencing the package's location.
 Arguments:
   DB - unboxed database
   PD - unboxed package descriptor
@@ -110,7 +110,7 @@ record the buffer position and the buffer text respectively."
      ,@body))
       
 (defun unboxed--make-rewrite-boxed-sexprs (db pd cat file)
-  "Test whether FILE contains a sexp referencing the package's location.
+  "Return a sexpr-pred for changing boxed sexprs to PD data directory.
 Arguments:
   DB - unboxed database
   PD - unboxed package descriptor
@@ -198,7 +198,7 @@ FILENAME - file name being installed, or nil if none"
 	logfile-base
 	logfile
 	warnfile
-	msgfile	
+	msgfile
 	sys-lp
 	lp
 	load-sexprs
@@ -430,7 +430,7 @@ using INSTALL-ACTION."
     installed))
 
 (defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred)
-  "Rewrite file SRC to DEST using SEXPR-PRED".
+  "Rewrite file SRC to DEST using SEXPR-PRED.".
   (with-temp-buffer
     (insert-file-contents src)
     (unboxed--pcase-replace-sexpr sexpr-pred)
@@ -441,7 +441,7 @@ using INSTALL-ACTION."
   (copy-file src dest t))
 
 (defun unboxed--install-copy (db pd cat file copy-action &optional aux)
-  "Installs file into CAT location using COPY-ACTION and AUX data.
+  "Install file into CAT location using COPY-ACTION and AUX data.
 Arguments:
   DB - unboxed database
   PD - unboxed package descriptor
@@ -477,7 +477,7 @@ Arguments:
     `(,inst)))
 
 (defun unboxed--install-rewriting-library-copy (db pd cat file)
-  "Installs file into CAT location with rewriting if needed.
+  "Install file into CAT location with rewriting if needed.
 Arguments:
   DB - unboxed database
   PD - unboxed package descriptor
@@ -492,7 +492,7 @@ Arguments:
      db pd cat file
      #'unboxed--simple-copy)))
 
-(defun unboxed--install-simple-copy (db pd cat file) 
+(defun unboxed--install-simple-copy (db pd cat file)
   "Copies file into CAT location.
 Arguments:
   DB - unboxed database
@@ -502,7 +502,7 @@ Arguments:
   (unboxed--install-copy db pd cat file #'unboxed--simple-copy))
 
 (defun unboxed--install-pkg-relative-copy (db pd cat file)
-  "Installs file in package-specific subdirectory of CAT.
+  "Install file in package-specific subdirectory of CAT.
 Arguments:
   DB - unboxed database
   PD - unboxed package descriptor
