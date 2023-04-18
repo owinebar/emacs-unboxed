@@ -29,7 +29,8 @@
 (require 'unboxed-decls)
 
 (defvar unboxed-theme-libraries
-  '(apropospriate-theme))
+  '(apropospriate-theme)
+  "Libraries for themes that end in -theme but are not theme files.")
 
 ;;; libraries to install in the package lisp directory
 (defun unboxed-library-p (path)
