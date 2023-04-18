@@ -26,7 +26,6 @@
 
 ;;; Code:
 
-;(require 'unboxed-custom)
 
 (define-error 'unboxed-replace-sexpr "Bad sexpr parse")
 (define-error 'unboxed-unrecognized-read-syntax
