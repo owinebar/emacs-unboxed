@@ -26,6 +26,7 @@
 
 ;;; Code:
 
+(require 'async-job-queue)
 (require 'unboxed-decls)
 (require 'unboxed-categories)
 (require 'unboxed-file-management)
@@ -189,7 +190,7 @@ Arguments:
 	     pkgs)
     (reverse unboxed-pkgs)))
 
-(defun unboxed--unbox-package (db pd installed-by-cat)
+(defun unboxed--unbox-package (db pd installed-files-k &optional ajq)
   "Unbox package PD in DB with INSTALLED-BY-CAT alist of installed-files."
   (message "Unboxing %s" pd)
   (let ((area (unboxed--sexpr-db-area db))
@@ -215,23 +216,9 @@ Arguments:
 	    files)
       (setq files (nreverse noncat-files)
 	    noncat-files nil)
-      (when install-files
-	(setq all-installed (cons (funcall install-files db pd cat-files)
-				  all-installed)))
-      (setq cat-files nil))
-    (setq ls all-installed)
-    (while all-installed
-      (setq ls (pop all-installed))
-      (while ls
-	;; reuse the cons cells already allocated above
-	(setq pr ls
-	      ls (cdr ls)
-	      inst (car pr)
-	      cat (unboxed-installed-file-category inst)
-	      cat-installed-files-pair (assq cat installed-by-cat))
-	(setcdr pr (cdr cat-installed-files-pair))
-	(setcdr cat-installed-files-pair pr)))
-    installed-by-cat))
+      (if install-files
+	  (funcall install-files db pd cat-files ajq installed-files-k)
+	(installed-files-k nil)))))
 
 (defun unboxed--unbox-packages-in-db (db)
   "Unbox all packages in DB that satisfy its predicate."
@@ -239,6 +226,41 @@ Arguments:
    db
    (unboxed--packages-to-unbox db)))
 
+(defun unboxed--make-category-queue-alist (cats)
+  "Make an alist of queues for category set CATS."
+  (mapcar (lambda (c-pr)
+	    `(,(unboxed-file-category-name (cdr c-pr)) . ,(ajq--make-queue)))
+	  cats))
+
+(defun unboxed--add-installed-file-to-cat-queue (inst als)
+  "Add installed-file INST to alist ALS."
+  (let ((cat (unboxed-installed-file-category inst))
+	pr)
+    (setq pr (assq cat als))
+    (unless pr
+      (signal 'unboxed-invalid-category `(,inst ,als)))
+    (setcdr pr (ajq--queue-push (cdr pr) inst))))
+
+(defun unboxed--ensure-category-locations (cats)
+  "Ensure locations of file categories in CATS alist exist."
+  (let ((ls cats)
+	cat loc)
+    (while ls
+      (setq cat (cdr (pop ls)))
+      (setq loc (unboxed-file-category-location cat))
+      (when (stringp loc)
+	(unless (file-accessible-directory-p loc)
+	  (make-directory loc t))))))
+
+
+(defvar unboxed--package-job-queue-freq 1.0
+  "Polling frequency for job queues created during unbox operations")
+
+(defun unboxed--add-installed-file (inst installed)
+  "Add installed file INST to hash table INSTALLED by its standard key."
+  (puthash (unboxed--installed-file-key inst)
+	   inst
+	   installed))
 (defun unboxed--unbox-package-list-in-db (db pkg-ls)
   "Unbox packages in PKG-LS in DB."
   (unless unboxed-temp-directory
@@ -251,50 +273,76 @@ Arguments:
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
+	ajq finalize-pkg-files-k
 	cats installed-by-cat pkgs-to-unbox ls pd
-	cat-name new-installed cat loc)
+	cat-name new-installed cat loc ajq installed-file-k)
     (maphash (lambda (key value)
 	       (when (memq key pkg-ls)
 		 (push value pkgs-to-unbox)))
 	     pkgs)
-    (setq cats (unboxed--area-categories area)
-	  ls cats
-	  installed-by-cat (mapcar
-			    (lambda (c-pr)
-			      `(,(unboxed-file-category-name (cdr c-pr))))
-			    cats))
+    (setq cats (unboxed--area-categories area))
+    (unboxed--ensure-category-locations cats)
+    (setq installed-by-cat (ub--make-category-queue-alist cats)
+	  installed-file-k (lambda (inst)
+			     (unboxed--add-installed-file inst installed)
+			     (ub--ad-installed-file-to-cat-queue
+			      inst installed-by-cat))
+	  finalize-pkg-files-k (lambda (ajq)
+				 (unboxed--finalize-unbox-package-list
+				  ajq db cats installed-by-cat pkgs-to-unbox))
+	  ajq (ajq--make-job-queue unboxed--package-job-queue-freq
+				   nil
+				   finalize-pkg-files-k
+				   nil
+				   nil
+				   nil
+				   'unbox-install-jobs)
+	  ls pkgs-to-unbox)
     (while ls
-      (setq cat (cdr (pop ls)))
-      (setq loc (unboxed-file-category-location cat))
-      (when (stringp loc)
-	(unless (file-accessible-directory-p loc)
-	  (make-directory loc t))))
-    (setq ls pkgs-to-unbox)
-    (while ls
-      (setq pd (pop ls)
-	    installed-by-cat (unboxed--unbox-package db pd installed-by-cat)))
-    (setq ls cats)
+      (unboxed--unbox-package db (pop ls) installed-file-k ajq))))
+
+(defun unboxed--finalize-unbox-package-list (ajq db cats installed-by-cat pkgs-to-unbox)
+  "Finalize unboxing of packages PKGS-TO-UNBOX in database DB.
+Arguments:
+  AJQ - Job queue used for installing package-specific files
+  DB - package database
+  CATS - file categories from DB
+  INSTALLED-BY-CAT - queues of installed files produced according to the category they belong to
+  PKGS-TO-UNBOX - list of package structs being installed"
+  (let ((ls cats)
+	(installed (unboxed--sexpr-db-installed db))
+	(insts-q (ajq--make-queue))
+	cat cat-name finalize-install-files cat-installed-files
+	finalize-installed-files-k final-k)
+    ;; clean out the category queues and record them in the installed hash table of the db
+    (mapc (lambda (pr)
+	    (ajq--queue-push insts-q (ajq--queue-reset (cdr pr))))
+	  cats)
     (while ls
       (setq cat (cdr (pop ls))
 	    cat-name (unboxed-file-category-name cat)
 	    finalize-install-files (unboxed-file-category-finalize-install-files cat)
-	    cat-installed-files (cdr (assq cat-name installed-by-cat)))
-      (mapc (lambda (inst)
-	      (puthash (unboxed--installed-file-key inst)
-		       inst
-		       installed))
-	    cat-installed-files)
+	    cat-installed-files (ajq--queue-pop insts-q)
+	    final-k (lambda (ajq)
+		      (mapc (lambda (pd)
+			      (setf (unboxed-package-desc-manager pd) 'unboxed))
+			    pkgs-to-unbox))
+	    finalize-installed-files-k (lambda (inst)
+					 (unboxed--add-installed-file inst installed))
+	    ajq (ajq--make-job-queue unboxed--package-job-queue-freq
+				     nil
+				     final-k
+				     nil
+				     nil
+				     nil
+				     'unbox-finalize-install-jobs))
       (when finalize-install-files
-	(setq new-installed (funcall finalize-install-files db
-					    cat cat-installed-files))
-	(mapc (lambda (inst)
-		(puthash (unboxed--installed-file-key inst)
-			 inst
-			 installed))
-	      new-installed)))
-    (mapc (lambda (pd)
-	    (setf (unboxed-package-desc-manager pd) 'unboxed))
-	  pkgs-to-unbox)
+	(funcall finalize-install-files
+		 db
+		 cat
+		 cat-installed-files
+		 ajq
+		 finalize-installed-files-k)))
     db))
 
 (defun unboxed--rebox-package-list-in-db (db pkg-ls)
