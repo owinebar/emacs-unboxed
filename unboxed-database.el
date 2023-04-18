@@ -1,3 +1,4 @@
+;;; unboxed-database.el --- database operations for unboxed
 ;;; unboxed-database.el        -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
@@ -30,11 +31,13 @@
 (require 'unboxed-file-management)
 
 (defun unboxed--installed-file-key (inst)
+  "Key for installed-file INST in installed field of database."
   (file-name-concat
    (symbol-name (unboxed-installed-file-category inst))
    (unboxed-installed-file-file inst)))
 
 (defun unboxed--package-in-boxes (pd boxes)
+  "Test whether package PD is on the paths in BOXES."
   ;(setq boxes (mapcar #'expand-file-name boxes))
   (let ((d (package-desc-dir pd))
 	result)
@@ -44,8 +47,11 @@
     result))
 
 (defun unboxed--init-package-desc (mgr pd version)
-  "Initialize an unboxed package descriptor extending
-the pre-existing package-desc"
+  "Initialize unboxed package descriptor from package-desc PD.
+Arguments:
+  MGR - package installation manager, `package' or `unboxed'
+  PD - unboxed package description
+  VERSION - version string from boxed directory of PD"
   (let ((s (unboxed-package-desc-create :manager 'package
 					:version-string version))
 	n)
@@ -70,6 +76,18 @@ the pre-existing package-desc"
 				       theme-libs datadir-pats
 				       patches autoloads
 				       cat-settings)
+  "Create area struct from customization value.
+Arguments:
+  NAME -
+  BOXES - paths of boxed packages in the area
+  DB-PATH - path to db
+  PRED - Test
+  EXCLUDED - exclude
+  THEME-LIBS
+  DATADIR-PATS -
+  PATCHES - alist of packages and patch files to use in place of rewriting
+  AUTOLOADS - base name of autoloads file to generate in the libraries directory
+  CAT-SETTINGS - category parameters in customization format"
   (let ((cats
 	 (mapcar (lambda (args)
 		   (let ((cat (apply #'unboxed--categories-setting->struct
@@ -84,6 +102,7 @@ the pre-existing package-desc"
 			cats)))
 
 (defun unboxed--areas-from-settings (areas-settings)
+  "Create alist of area structures from AREAS-SETTINGS."
   (let ((areas
 	 (mapcar
 	  (lambda (area-settings)
@@ -94,7 +113,7 @@ the pre-existing package-desc"
     areas))
 
 (defun unboxed--scoped-areas (area-name areas)
-  "Return tail of areas alist with first association key eq to area-name"
+  "Return tail of AREAS alist with first association key eq to AREA-NAME."
   (let (pr)
     (while (and (null pr) areas)
       (setq pr (pop areas))
@@ -105,6 +124,7 @@ the pre-existing package-desc"
   areas)
 
 (defun unboxed--scoped-libdirs (db)
+  "List library directories from areas in dependency scope of DB."
   (let ((scoped-areas
 	 (unboxed--scoped-areas
 	  (unboxed--area-name (unboxed--sexpr-db-area db))
@@ -117,6 +137,7 @@ the pre-existing package-desc"
     libdirs))
 
 (defun unboxed--scoped-autoloads (db)
+  "List autoload files from areas in dependency scope of DB."
   (let ((scoped-areas
 	 (unboxed--scoped-areas
 	  (unboxed--area-name (unboxed--sexpr-db-area db))
@@ -129,6 +150,7 @@ the pre-existing package-desc"
     (nreverse als)))
 
 (defun unboxed--excluded-package-regex (ls)
+  "Construct regular expression to match the package names on LS."
   (let (re-ls syms re e)
     (while ls
       (setq e (pop ls))
@@ -147,6 +169,7 @@ the pre-existing package-desc"
     e))
 
 (defun unboxed--apply-package-pred (pred excluded-re pd)
+  "Apply PRED to PD if its name does not match EXCLUDED-RE."
   (let (rv)
     (unless (string-match-p excluded-re
 			    (symbol-name (unboxed-package-desc-name pd)))
@@ -154,6 +177,7 @@ the pre-existing package-desc"
     rv))
 
 (defun unboxed--packages-to-unbox (db)
+  "List packages from boxed area of DB matching its predicate."
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	unboxed-pkgs pred excluded-re)
@@ -166,7 +190,8 @@ the pre-existing package-desc"
     (reverse unboxed-pkgs)))
 
 (defun unboxed--unbox-package (db pd installed-by-cat)
-  (message "Unboxing %s" pd) 
+  "Unbox package PD in DB with INSTALLED-BY-CAT alist of installed-files."
+  (message "Unboxing %s" pd)
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
@@ -209,11 +234,13 @@ the pre-existing package-desc"
     installed-by-cat))
 
 (defun unboxed--unbox-packages-in-db (db)
+  "Unbox all packages in DB that satisfy its predicate."
   (unboxed--unbox-packages-in-list
    db
    (unboxed--packages-to-unbox db)))
 
 (defun unboxed--unbox-package-list-in-db (db pkg-ls)
+  "Unbox packages in PKG-LS in DB."
   (unless unboxed-temp-directory
     (setq unboxed-temp-directory (file-name-concat user-emacs-directory
 						   "tmp")))
@@ -271,6 +298,7 @@ the pre-existing package-desc"
     db))
 
 (defun unboxed--rebox-package-list-in-db (db pkg-ls)
+  "Rebox packages in PKG-LS of DB."
   (let ((area (unboxed--sexpr-db-area db))
 	(pkgs (unboxed--sexpr-db-packages db))
 	(installed (unboxed--sexpr-db-installed db))
@@ -294,6 +322,7 @@ the pre-existing package-desc"
     db))
 
 (defun unboxed--ensure-autoloads-file (al-fn)
+  "Create the autoloads file AL-FN if it does not exist already."
   (when (file-writable-p al-fn)
     (let ((feature (intern
 		    (file-name-sans-extension
@@ -311,8 +340,7 @@ the pre-existing package-desc"
 	  (write-region nil nil al-fn))))))
 
 (defun unboxed--create-sexpr-db (area-name areas)
-  "Create an unboxed db in the sexpr format - initialize from package-desc
-table assuming no packages have been unboxed"
+  "Create an unboxed db for AREA-NAME defined in alist AREAS."
   (let (area box-paths boxed-pkgs pkgs inst autoloads library-loc cats lib-cat al-fn)
     ;; Only record areas in scope
     ;; E.G. site package database should not contain references to user database file
@@ -368,7 +396,7 @@ table assuming no packages have been unboxed"
      :installed inst)))
 
 (defun unboxed--make-dbs-from-settings (area-settings)
-  "Initialize unboxing areas from the value of a customization variable"
+  "Initialize unboxing areas from the value of a customization variable AREA-SETTINGS."
   (let ((areas (unboxed--areas-from-settings area-settings))
 	dbs)
     (setq dbs
@@ -382,7 +410,7 @@ table assuming no packages have been unboxed"
 
 ;;; FIXME: should validate db structure
 (defun unboxed--load-database (area)
-  "Load the database associated with area"
+  "Load the database associated with AREA."
   (let ((db-path (unboxed--area-db-path area))
 	db)
     (when (file-readable-p db-path)
@@ -392,8 +420,8 @@ table assuming no packages have been unboxed"
     db))
 
 (defun unboxed--save-database (db)
-  "Save the database"
-  (let ((db-path (unboxed--area-db-path area)))    
+  "Save the database DB."
+  (let ((db-path (unboxed--area-db-path area)))
     (with-temp-buffer
       (pp db (current-buffer))
       (if (file-exists-p db-path)
