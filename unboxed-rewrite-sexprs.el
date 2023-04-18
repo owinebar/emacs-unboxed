@@ -34,8 +34,8 @@
 
 
 (defun unboxed--next-sexpr-start ()
-  "Find the start of the *next* sexpr, which may begin at point but no \
-earlier."
+  "Find the start of the *next* sexpr.
+It may begin at point but no earlier."
   (save-excursion
     (save-restriction
       (narrow-to-region (point) (point-max))
@@ -44,8 +44,8 @@ earlier."
       (point))))
 
 (defun unboxed--this-sexpr-start (&optional min-start)
-  "Find the start of the sexpr which point follows or is in, \
-subject to lower bound of MIN-START."
+  "Find the start of the sexpr which point follows or is in.
+Subject to lower bound of MIN-START."
   (save-excursion
     (save-restriction
       (when min-start
