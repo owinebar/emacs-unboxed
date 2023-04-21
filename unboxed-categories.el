@@ -184,6 +184,6 @@ FINALIZE-REMOVE-NAME"
 ;;; unboxed-categories.el ends here
 
 ;; Local Variables:
-;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-")("q-" . "queue-"))
 ;; End:
 ;; 
