@@ -76,6 +76,46 @@ or site packages
 		      (unboxed-file-category-location (cdr result))))
     result))
 
+
+(cl-defstruct (unboxed--transaction-state
+	       (:constructor unboxed--transaction-state-create)
+	       (:copier unboxed--transaction-state-copy))
+  "Database state
+  Slots:
+  `packages' - set of unboxed package desc objects
+  `files' - set of unboxed installed file objects
+"
+  packages
+  files
+  )
+
+(cl-defstruct (unboxed--transaction-delta
+	       (:constructor unboxed--transaction-delta-create)
+	       (:copier unboxed--transaction-delta-copy))
+  "The difference between two database states.
+  Slots:
+  `remove' the db state to eliminate
+  `install' the db state requiring installation"
+  remove
+  install)
+
+
+(cl-defstruct (unboxed--transaction
+	       (:constructor unboxed--transaction-create)
+	       (:copier unboxed--transaction-copy))
+  "Structure holding data for database transaction in-progress.
+  Slots:
+  `db' Database subject to the transaction
+  `initial'  The initial database state as a transaction-state
+  `delta' The change made by the transaction as a transaction-delta
+  `final' The final database state as a transaction-state
+  `on-completion' continuation invoked when transaction is complete"
+  db
+  initial
+  delta
+  final
+  on-completion)
+
 ;; note - it's entirely possible for a site to have one version of unboxed installed
 ;; and for a user to have another version installed.  Therefore, we record
 ;; the layout of structures in structure itself to allow some forward/backward
@@ -377,7 +417,7 @@ until a list of strings is produced."
 	(push (pop ls) r)))
     r))
 	
-   
+
 (defun unboxed--make-area (name
 			   boxes-conf
 			   db-path-conf
@@ -436,6 +476,6 @@ CATS"
 ;;; unboxed-decls.el ends here
 
 ;; Local Variables:
-;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-"))
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("ub-" . "unboxed-")("q-" . "queue-"))
 ;; End:
 
