@@ -82,13 +82,20 @@ or site packages
 	       (:copier unboxed--transaction-state-copy))
   "Database state
   Slots:
-  `packages' - set of unboxed package desc objects
+  `package-descs' set of unboxed package desc object
+  `packages' - map package symbols to list of versions in boxed area
+  `
   `files' - set of unboxed installed file objects
-"
+  `locations' - list of installed files in each category location"
   packages
   files
-  )
+  locations )
 
+(defun ub--make-transaction-state (packages)
+  "Initialize a transaction state for list of PACKAGES."
+  (unb--transaction-state-create
+   :packages (
+	      
 (cl-defstruct (unboxed--transaction-delta
 	       (:constructor unboxed--transaction-delta-create)
 	       (:copier unboxed--transaction-delta-copy))
@@ -128,15 +135,17 @@ or site packages
    `layouts' Association list of data structure layouts used in this db
    `areas' Association list of area structs in scope for dependency calculations
    `area' area struct for this database
-   `packages' Assoc list of unboxed-package-descs for unboxed packages in this
-              area.
-   `installed' Assoc list of unboxed-installed-file structs for each file
-              unboxed in the area."
+   `packages' Hash table of unboxed-package-descs for unboxed packages in this
+              area
+   `files' Hash table of unboxed-installed-file structs for each file
+              unboxed in the area
+   `locations' list of files in each file category location"
   layouts
   areas
   area
   packages
-  installed)
+  installed
+  locations)
 
 (defun unboxed--sexpr-db-name (db)
   "Return the name of DB."
@@ -218,7 +227,7 @@ for reference.
   Slots:
   `area' name of the unboxing area
   `package' name of package as symbol
-  `package-version-string' version of package as a string
+  `version' version of package as a string
   `package-location' directory providing boxed package contents
   `category' category of file as symbol
   `category-location' directory containing installed file
@@ -233,7 +242,7 @@ for reference.
   `messages' *Messages* buffer during install process"
   area
   package
-  package-version-string
+  version
   package-location
   category
   category-location
@@ -274,8 +283,23 @@ installation manager
   `manager' name of installation manager for this package."
   single
   simple
-  version-string
-  manager)
+  (version-string "0")
+  (manager 'package))
+
+(defun unboxed--package-desc-key (pd)
+  (let ((name (unboxed-package-desc-name pd))
+	(vs (unboxed-package-desc-version-string pd)))
+    (intern (concat (symbol-name name) "@" vs)))) 
+
+(defun unboxed--installed-file-key (inst)
+  (let ((name (unboxed-installed-file-file inst))
+	(vs (unboxed-installed-file-version inst)))
+    (intern (concat (symbol-name name) "@" vs))))
+
+(defun unboxed--installed-file-source-key (inst)
+  (let ((name (unboxed-installed-file-name inst))
+	(vs (unboxed-installed-file-version inst)))
+    (intern (concat (symbol-name name) "@" vs))))
 
 (defun unboxed-package-single-p (pd)
   "Test whether package descriptor PD is for a single file package."
