@@ -198,7 +198,7 @@ FILENAME - file name being installed, or nil if none"
 	(temporary-file-directory unboxed-temp-directory))
     (make-temp-file logfile-base)))
 
-(defun unboxed--async-byte-compile-file (file)
+(defun unboxed--async-byte-compile-file (file ajq k)
   "Byte-compile FILE in asyncronous sandbox."
   (let ((el-name (file-name-nondirectory file))
 	logfile-base
@@ -214,6 +214,8 @@ FILENAME - file name being installed, or nil if none"
 	elc-name
 	elc-path
 	result
+	job-id
+	finish-k
 	proc
 	proc-result)
     (while ls
@@ -228,6 +230,34 @@ FILENAME - file name being installed, or nil if none"
 	  elc-path  (if (string= (file-name-extension el-path) "el")
 			(concat el-path "c")
 		      (concat el-path ".elc"))
+	  job-id (intern (concat "byte-compile--" el-name))
+	  finish-k
+	  (lambda (proc-result)
+	    (when (file-exists-p logfile)
+	      (with-temp-buffer
+		(insert-file-contents logfile)
+		(setq log-text (buffer-string)))
+	      (delete-file logfile))
+	    (when (file-exists-p warnfile)
+	      (with-temp-buffer
+		(insert-file-contents warnfile)
+		(setq warn-text (buffer-string)))
+	      (delete-file warnfile))
+	    (when (file-exists-p msgfile)
+	      (with-temp-buffer
+		(insert-file-contents msgfile)
+		(setq msg-text (buffer-string)))
+	      (delete-file msgfile))
+	    (unboxed--with-snaps
+	     (log msgs warns)
+	     (setf (unboxed-installed-file-log inst) log)
+	     (setf (unboxed-installed-file-warnings inst) warns)
+	     (setf (unboxed-installed-file-messages inst) msgs))
+	    (k 
+	     `((compiled ,(file-exists-p elc-path))
+	       (messages (host ,msgs) (sandbox ,msg-text))
+	       (warnings (host ,warns) (sandbox ,warn-text))
+	       (log (host ,log) (sandbox ,log-text)))))
 	  program
 	  `(lambda ()
 	     (condition-case nil
@@ -252,32 +282,17 @@ FILENAME - file name being installed, or nil if none"
 		 (with-current-buffer log-buffer
 		   (write-region nil nil ,msgfile))))
 	     t))
-    (setq proc (async-start program nil))
-    (setq proc-result (async-get proc))
-    (when (file-exists-p logfile)
-      (with-temp-buffer
-	(insert-file-contents logfile)
-	(setq log-text (buffer-string)))
-      (delete-file logfile))
-    (when (file-exists-p warnfile)
-      (with-temp-buffer
-	(insert-file-contents warnfile)
-	(setq warn-text (buffer-string)))
-      (delete-file warnfile))
-    (when (file-exists-p msgfile)
-      (with-temp-buffer
-	(insert-file-contents msgfile)
-	(setq msg-text (buffer-string)))
-      (delete-file msgfile))
-    (unboxed--with-snaps
-     (log msgs warns)
-     (setf (unboxed-installed-file-log inst) log)
-     (setf (unboxed-installed-file-warnings inst) warns)
-     (setf (unboxed-installed-file-messages inst) msgs))
-    `((compiled ,(file-exists-p elc-path))
-      (messages (host ,msgs) (sandbox ,msg-text))
-      (warnings (host ,warns) (sandbox ,warn-text))
-      (log (host ,log) (sandbox ,log-text)))))
+    (ajq--schedule-job ajq prog
+		       job-id
+		       (lambda (job)
+			 (message "Starting %s" job-id))
+		       (lambda (job v)
+			 (message "Starting %s: Done" job-id))
+		       unboxed--async-byte-compile-time-out
+		       (lambda (job)
+			 (message "Starting %s: Timed out" job-id))
+		       (lambda (job)
+			 (message "Starting %s: Cancelled" job-id)))))
 
 (defun unboxed--async-byte-compile-library (db installed-file ajq k)
   "Byte-compile library file of INSTALLED-FILE in a sandbox.
@@ -306,7 +321,7 @@ Arguments:
     (let ((area (unboxed--sexpr-db-area db))
 	  (cats (unboxed--sexpr-db-categories db))
 	  (pkg-name (unboxed-installed-file-package installed-file))
-	  (pkg-version (unboxed-installed-file-package-version-string installed-file))
+	  (pkg-version (unboxed-installed-file-version installed-file))
 	  (pkg-loc (unboxed-installed-file-package-location installed-file))
 	  (cat (unboxed-installed-file-category installed-file))
 	  (cat-loc (unboxed-installed-file-category-location installed-file))
