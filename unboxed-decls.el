@@ -1,5 +1,4 @@
-;;; unboxed-decls.el --- Structure declarations for unboxed
-;;; unboxed-decls.el        -*- lexical-binding: t; -*-
+;;; unboxed-decls.el --- Structure declarations for unboxed        -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
@@ -114,12 +113,14 @@ or site packages
   Slots:
   `db' Database subject to the transaction
   `initial'  The initial database state as a transaction-state
-  `delta' The change made by the transaction as a transaction-delta
+  `todo' The changes to be made by the transaction as a transaction-delta
+  `done' The changes already made by the transaction as a transaction-delta
   `final' The final database state as a transaction-state
   `on-completion' continuation invoked when transaction is complete"
   db
   initial
-  delta
+  todo
+  done
   final
   on-completion)
 

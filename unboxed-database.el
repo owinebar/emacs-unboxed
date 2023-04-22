@@ -1,5 +1,4 @@
-;;; unboxed-database.el --- database operations for unboxed
-;;; unboxed-database.el        -*- lexical-binding: t; -*-
+;;; unboxed-database.el --- database operations for unboxed    -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 

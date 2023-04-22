@@ -1,5 +1,4 @@
-;;; unboxed-file-management.el --- file management routines
-;;; unboxed-file-management.el        -*- lexical-binding: t; -*-
+;;; unboxed-file-management.el --- file management routines   -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 

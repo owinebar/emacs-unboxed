@@ -1,5 +1,4 @@
-;;; unboxed-categories.el --- File category implemenation for unboxed
-;;; unboxed-categories.el        -*- lexical-binding: t; -*-
+;;; unboxed-categories.el --- File category implemenation for unboxed     -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 

@@ -1,5 +1,4 @@
-;;; unboxed-custom.el --- Customization variables for unboxed
-;;; unboxed-custom.el        -*- lexical-binding: t; -*-
+;;; unboxed-custom.el --- Customization variables for unboxed   -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
