@@ -30,12 +30,6 @@
 (require 'unboxed-categories)
 (require 'unboxed-file-management)
 
-(defun unboxed--installed-file-key (inst)
-  "Key for installed-file INST in installed field of database."
-  (file-name-concat
-   (symbol-name (unboxed-installed-file-category inst))
-   (unboxed-installed-file-file inst)))
-
 (defun unboxed--package-in-boxes (pd boxes)
   "Test whether package PD is on the paths in BOXES."
   ;(setq boxes (mapcar #'expand-file-name boxes))
@@ -45,30 +39,6 @@
       (setq d (expand-file-name d)
 	    result (seq-filter (lambda (p) (string-prefix-p p d)) boxes)))
     result))
-
-(defun unboxed--init-package-desc (mgr pd version)
-  "Initialize unboxed package descriptor from package-desc PD.
-Arguments:
-  MGR - package installation manager, `package' or `unboxed'
-  PD - unboxed package description
-  VERSION - version string from boxed directory of PD"
-  (let ((s (unboxed-package-desc-create :manager 'package
-					:version-string version))
-	n)
-    (setq n (length pd))
-    (if (recordp s)
-	(let ((i 1))
-	  (while (< i n)
-	    (aset s i (aref pd i))
-	    (cl-incf i)))
-      (let ((i0 1))
-	(unless (eq (seq-elt s 0) 'unboxed-package-desc)
-	  (setq i0 0))
-	(seq-map-indexed (lambda (elt idx)
-			   (when (>= idx i0)
-			     (setf (seq-elt s idx) elt)))
-			 pd)))
-    s))
 
 (defun unboxed--area-settings->struct (name
 				       boxes db-path
@@ -225,21 +195,6 @@ Arguments:
    db
    (unboxed--packages-to-unbox db)))
 
-(defun unboxed--make-category-queue-alist (cats)
-  "Make an alist of queues for category set CATS."
-  (mapcar (lambda (c-pr)
-	    `(,(unboxed-file-category-name (cdr c-pr)) . ,(ajq--make-queue)))
-	  cats))
-
-(defun unboxed--add-installed-file-to-cat-queue (inst als)
-  "Add installed-file INST to alist ALS."
-  (let ((cat (unboxed-installed-file-category inst))
-	pr)
-    (setq pr (assq cat als))
-    (unless pr
-      (signal 'unboxed-invalid-category `(,inst ,als)))
-    (setcdr pr (ajq--queue-push (cdr pr) inst))))
-
 (defun unboxed--ensure-category-locations (cats)
   "Ensure locations of file categories in CATS alist exist."
   (let ((ls cats)
@@ -255,11 +210,6 @@ Arguments:
 (defvar unboxed--package-job-queue-freq 1.0
   "Polling frequency for job queues created during unbox operations")
 
-(defun unboxed--add-installed-file (inst installed)
-  "Add installed file INST to hash table INSTALLED by its standard key."
-  (puthash (unboxed--installed-file-key inst)
-	   inst
-	   installed))
 (defun unboxed--unbox-package-list-in-db (db pkg-ls)
   "Unbox packages in PKG-LS in DB."
   (unless unboxed-temp-directory

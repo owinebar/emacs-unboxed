@@ -34,6 +34,49 @@
   "The unboxed logging buffer.")
 
 
+(defun queue-remq (q elt)
+  "Remove all occurence of ELT from queue Q"
+  (let ((ls (delq elt (queue-all)))
+	tail0 tail1)
+    (setq tail0 ls)
+    (when (consp tail0)
+      (setq tail1 (cdr tail0)))
+    (while tail1
+      (setq tail1 (cdr (setq tail0 (cdr tail0)))))
+    (setf (queue-head q) ls)
+    (setf (queue-tail q) tail0))
+  q)
+
+(defun queue-remove (q elt)
+  "Remove all occurence of ELT from queue Q"
+  (let ((head (queue-all q))
+	 ls
+	tail0 tail1)
+    (setq ls (delete elt head)
+	  (setq tail0 ls))
+    (when (consp tail0)
+      (setq tail1 (cdr tail0)))
+    (while tail1
+      (setq tail1 (cdr (setq tail0 (cdr tail0)))))
+    (setf (queue-head q) ls)
+    (setf (queue-tail q) tail0))
+  q)
+
+(defun queue-filter (q pred)
+  "Remove all occurence of ELT from queue Q"
+  (let ((head (queue-all q))
+	 ls
+	tail0 tail1)
+    (setq ls (seq-filter pred head)
+	  (setq tail0 ls))
+    (when (consp tail0)
+      (setq tail1 (cdr tail0)))
+    (while tail1
+      (setq tail1 (cdr (setq tail0 (cdr tail0)))))
+    (setf (queue-head q) ls)
+    (setf (queue-tail q) tail0))
+  q)
+
 (cl-defstruct (unboxed--area
 	       (:constructor unboxed--area-create)
 	       (:copier unboxed--area-copy))
@@ -83,17 +126,19 @@ or site packages
   Slots:
   `package-descs' set of unboxed package desc object
   `packages' - map package symbols to list of versions in boxed area
-  `
   `files' - set of unboxed installed file objects
   `locations' - list of installed files in each category location"
+  package-descs
   packages
   files
   locations )
 
-(defun ub--make-transaction-state (packages)
-  "Initialize a transaction state for list of PACKAGES."
+(defun unboxed--make-transaction-state (packages)
+  "Initialize a transaction state for list of unboxed package descriptors PACKAGES."
+  (let ((pds (make-hash-table eq))
+	
   (unb--transaction-state-create
-   :packages (
+   :package-descs pds
 	      
 (cl-defstruct (unboxed--transaction-delta
 	       (:constructor unboxed--transaction-delta-create)
@@ -226,6 +271,7 @@ An installed-file record may be created even if the installation of
 the file failed, so that the messages/warnings/log will be kept
 for reference.
   Slots:
+  `id' symbol used as unique key for category + file
   `area' name of the unboxing area
   `package' name of package as symbol
   `version' version of package as a string
@@ -254,6 +300,73 @@ for reference.
   warnings
   messages)
 
+(defun unboxed--make-category-queue-alist (cats)
+  "Make an alist of queues for category set CATS."
+  (mapcar (lambda (c-pr)
+	    `(,(unboxed-file-category-name (cdr c-pr)) . ,(ajq--make-queue)))
+	  cats))
+
+(defun unboxed--exists-installed-file-in-cat-queue-p (inst als)
+  "Test whether installed-file with same category and file as INST exists in alist ALS."
+  (let ((cat (unboxed-installed-file-category inst))
+	(file (unboxed-installed-file-file inst))
+	pr)
+    (setq pr (assq cat als))
+    (unless pr
+      (signal 'unboxed-invalid-category `(,inst ,als)))
+    (seq-some (cdr pr)
+	      (lambda (inst)
+		(string= file
+			 (unboxed-installed-file-file inst))))))
+
+
+(defun unboxed--add-installed-file-to-cat-queue (inst als)
+  "Add installed-file INST to alist ALS."
+  (let ((cat (unboxed-installed-file-category inst))
+	pr)
+    (setq pr (assq cat als))
+    (unless pr
+      (signal 'unboxed-invalid-category `(,inst ,als)))
+    (setcdr pr (queue-enqueue (cdr pr) inst)))
+  als)
+
+(defun unboxed--add-installed-file (inst installed)
+  "Add installed file INST to hash table INSTALLED by its standard key."
+  (let ((k (unboxed--installed-file-key inst))
+	q)
+    (setq q (or (gethash k installed)
+		(puthash k (make-queue) installed)))
+    (queue-enqueue q inst))
+  installed)
+
+(defun unboxed--add-installed-file-to-transaction-state (state inst)
+  "Add INST to STATE."
+  (unboxed--add-installed-file-to-cat-queue 
+   inst
+   (unboxed--transaction-state-locations state))
+  (unboxed--add-installed-file
+   inst
+   (unboxed--transaction-state-files state)))
+
+(defun unboxed--add-installed-file (inst installed)
+  "Add installed file INST to hash table INSTALLED by its standard key."
+  (let ((k (unboxed--installed-file-key inst))
+	q)
+    (setq q (or (gethash k installed)
+		(puthash k (make-queue) installed)))
+    (queue-enqueue q inst))
+  installed)
+
+(defun unboxed--add-installed-file-to-transaction-state (state inst)
+  "Add INST to STATE."
+  (unboxed--add-installed-file-to-cat-queue 
+   inst
+   (unboxed--transaction-state-locations state))
+  (unboxed--add-installed-file
+   inst
+   (unboxed--transaction-state-files state)))
+
+	   
 
 (cl-defstruct (unboxed--struct-layout
                (:constructor unboxed--struct-layout-create)
@@ -278,26 +391,28 @@ from a file.
   "Package desc structure extended with fields recording its
 installation manager
   Slots:
+  `key' symbol that is unique for package name + version string
   `single' boolean which is t if the package is for a single library file
   `simple' boolean which is t if the package directory has no subdirectories
   `version-string' version string for this package
   `manager' name of installation manager for this package."
+  key
   single
   simple
   (version-string "0")
   (manager 'package))
 
-(defun unboxed--package-desc-key (pd)
+(defun unboxed--make-package-desc-key (pd)
   (let ((name (unboxed-package-desc-name pd))
 	(vs (unboxed-package-desc-version-string pd)))
     (intern (concat (symbol-name name) "@" vs)))) 
 
-(defun unboxed--installed-file-key (inst)
+(defun unboxed--make-installed-file-key (inst)
   (let ((name (unboxed-installed-file-file inst))
 	(vs (unboxed-installed-file-version inst)))
     (intern (concat (symbol-name name) "@" vs))))
 
-(defun unboxed--installed-file-source-key (inst)
+(defun unboxed--make-installed-file-source-key (inst)
   (let ((name (unboxed-installed-file-name inst))
 	(vs (unboxed-installed-file-version inst)))
     (intern (concat (symbol-name name) "@" vs))))
@@ -337,6 +452,55 @@ installation manager
   "Test that fails for any package descriptor PD."
   nil)
 
+(defun unboxed--init-package-desc (mgr pd version)
+  "Initialize unboxed package descriptor from package-desc PD.
+Arguments:
+  MGR - package installation manager, `package' or `unboxed'
+  PD - unboxed package description
+  VERSION - version string from boxed directory of PD"
+  (let ((s (unboxed-package-desc-create :manager 'package
+					:version-string version))
+	n)
+    (setq n (length pd))
+    (if (recordp s)
+	(let ((i 1))
+	  (while (< i n)
+	    (aset s i (aref pd i))
+	    (cl-incf i)))
+      (let ((i0 1))
+	(unless (eq (seq-elt s 0) 'unboxed-package-desc)
+	  (setq i0 0))
+	(seq-map-indexed (lambda (elt idx)
+			   (when (>= idx i0)
+			     (setf (seq-elt s idx) elt)))
+			 pd)))
+    (setf (unboxed-package-desc-key s)
+	  (unboxed--make-package-desc-key s))
+    s))
+
+(defun unboxed--make-installed-file (pd cat src-file dst-file)
+  "Make installed-file structure.
+Arguments:
+  PD - unboxed package descriptor
+  CAT - category structure
+  SRC-FILE - file in package's boxed location"
+  (let ((version (unboxed-package-desc-version-string pd))
+	(pkg (unboxed-package-desc-name pd))
+	(cname (unboxed-file-category-name cat))
+	(dst-loc (unboxed-file-category-location cat))
+	(src-loc (unboxed-package-desc-dir pd))
+	inst)
+    (setq inst
+	  (unboxed-installed-file-create :package pkg
+					 :package-version-string version
+					 :package-location src-loc
+					 :category cname
+					 :category-location dst-loc
+					 :file dst-file
+					 :package-source file))
+    (setf (unboxed-installed-file-key inst)
+	  (unboxed--make-installed-file-key inst))
+    inst))
 
 (defconst unboxed--file-category-customization-type
   `(list (symbol :tag "Name")

@@ -482,30 +482,21 @@ using INSTALL-ACTION."
 Arguments:
   DB - unboxed database
   PD - unboxed package descriptor
-  CAT - category name
+  CAT - category structure
   FILE - file in package's boxed location
   COPY-ACTION - function with arguments (SOURCE DEST AUX)
   AUX - optional data to be passed to COPY-ACTION"
   (unboxed--start-snaps log msgs warns)
-  (let ((version (unboxed-package-desc-version-string pd))
-	(pkg (unboxed-package-desc-name pd))
-	(cname (unboxed-file-category-name cat))
-	(dst-loc (unboxed-file-category-location cat))
+  (let ((dst-loc (unboxed-file-category-location cat))
 	(src-loc (unboxed-package-desc-dir pd))
 	inst dest src dst-file)
     (setq dst-file (file-name-nondirectory file)
 	  dest (file-name-concat dst-loc dst-file)
-	  src (file-name-concat src-loc file))
+	  src (file-name-concat src-loc file)
+	  inst (unboxed--make-installed-file pd cat file dst-file))
     (funcall copy-action src dest aux)
-    (setq inst
-	  (unboxed-installed-file-create :package pkg
-					 :package-version-string version
-					 :package-location src-loc
-					 :category cname
-					 :category-location dst-loc
-					 :file dst-file
-					 :package-source file
-					 :created (file-exists-p dest)))
+    (setf (unboxed-installed-file-created inst)
+	  (file-exists-p dest))
     (unboxed--with-snaps
      (log msgs warns)
      (setf (unboxed-installed-file-log inst) log)
@@ -545,27 +536,20 @@ Arguments:
   PD - unboxed package descriptor
   CAT - category name
   FILE - file in package's boxed location"
-  (let ((version (unboxed-package-desc-version-string pd))
-	(pkg (unboxed-package-desc-name pd))
-	(cname (unboxed-file-category-name cat))
+  (let ((pkg (unboxed-package-desc-name pd))
 	(dst-loc (unboxed-file-category-location cat))
 	(src-loc (unboxed-package-desc-dir pd))
 	inst dest src dst-file)
     (setq dst-file (file-name-concat (symbol-name pkg)
 				     file)
 	  dest (file-name-concat dst-loc dst-file)
-	  src (file-name-concat src-loc file))
+	  src (file-name-concat src-loc file)
+	  inst (unboxed--make-installed-file pd cat file dst-file))
     (when (> (length (file-name-nondirectory file)) 0)
       (make-directory (file-name-directory dest) t))
     (copy-file src dest t)
-    (setq inst
-	  (unboxed-installed-file-create :package pkg
-					 :package-version-string version
-					 :package-location src-loc
-					 :category cname
-					 :category-location dst-loc
-					 :file dst-file
-					 :package-source file))
+    (setf (unboxed-installed-file-created inst)
+	  (file-exists-p dest))
     `(,inst)))
 
 
