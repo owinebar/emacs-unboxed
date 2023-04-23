@@ -143,7 +143,7 @@ Arguments:
   "Install info file from INSTALLED-FILE.
 Utility for creating entry for an unboxed package info file in the dir file \
 for unboxed packages"
-  (let ((file (unboxed-installed-file-file installed-file))
+  (let ((file (symbol-name (unboxed-installed-file-file installed-file)))
 	(loc (unboxed-installed-file-category-location
 	      installed-file))
 	full-path info-dir info-file log-text)
@@ -163,7 +163,7 @@ for unboxed packages"
   "Remove info file specified in INSTALLED-FILE struct.
 Utility for creating entry for an unboxed package info file in the dir file \
 for unboxed packages"
-  (let ((file (unboxed-installed-file-file installed-file))
+  (let ((file (symbol-name (unboxed-installed-file-file installed-file)))
 	(loc (unboxed-installed-file-category-location
 	      installed-file))
 	full-path info-dir info-file log-text)
@@ -286,7 +286,8 @@ FILENAME - file name being installed, or nil if none"
 		       (lambda (job)
 			 (message "Starting %s" job-id))
 		       (lambda (job v)
-			 (message "Starting %s: Done" job-id))
+			 (message "Starting %s: Done" job-id)
+			 (finish-k v))
 		       unboxed--async-byte-compile-time-out
 		       (lambda (job)
 			 (message "Starting %s: Timed out" job-id))
@@ -324,8 +325,8 @@ Arguments:
 	  (pkg-loc (unboxed-installed-file-package-location installed-file))
 	  (cat (unboxed-installed-file-category installed-file))
 	  (cat-loc (unboxed-installed-file-category-location installed-file))
-	  (src (unboxed-installed-file-package-source installed-file))
-	  (lib (unboxed-installed-file-file installed-file))
+	  (src (symbol-name (unboxed-installed-file-package-source installed-file)))
+	  (lib (symbol-name (unboxed-installed-file-file installed-file)))
 	  (libdir (unboxed--sexpr-db-category-location db 'library))
 	  (themedir (unboxed--sexpr-db-category-location db 'theme))
 	  (infodir (unboxed--sexpr-db-category-location db 'info))
@@ -416,14 +417,15 @@ Arguments:
 		 (when log-buffer
 		   (with-current-buffer log-buffer
 		     (write-region nil nil ,msgfile))))))
-      (setf (unboxed-installed-file-file elc-installed) elc-name)
+      (setf (unboxed-installed-file-file elc-installed) (intern elc-name))
       (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
       (ajq--schedule-job ajq prog
 			 job-id
 			 (lambda (job)
 			   (message "Starting %s" job-id))
 			 (lambda (job v)
-			   (message "Starting %s: Done" job-id))
+			   (message "Starting %s: Done" job-id)
+			   (finish-k v))
 			 unboxed--async-byte-compile-time-out
 			 (lambda (job)
 			   (message "Starting %s: Timed out" job-id))
@@ -440,8 +442,8 @@ Arguments:
 ;;; install-action returns a list of file names actually installed
 ;;; relative to the supplied location
 (defun unboxed--install-list (cname db pd files install-action)
-  "Install list of FILES of package PD in DB from category CNAME \
-using INSTALL-ACTION."
+  "Install list of FILES of package PD in DB from category CNAME.
+Install uses INSTALL-ACTION."
   (let ((cat (cdr (assq cname (unboxed--sexpr-db-categories db))))
 	(ls files)
 	(pkg (unboxed-package-desc-name pd))
@@ -467,7 +469,7 @@ using INSTALL-ACTION."
     installed))
 
 (defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred)
-  "Rewrite file SRC to DEST using SEXPR-PRED.".
+  "Rewrite file SRC to DEST using SEXPR-PRED."
   (with-temp-buffer
     (insert-file-contents src)
     (rewriting-pcase--pcase-replace-sexpr sexpr-pred)
@@ -588,7 +590,7 @@ Arguments:
 	    (funcall remove-action
 		     pkg
 		     cname
-		     (unboxed-installed-file-file installed-file)
+		     (symbol-name (unboxed-installed-file-file installed-file))
 		     pkg-loc
 		     cat-loc))
       (setq deleted `(,@removed-file ,@deleted)))
@@ -697,7 +699,7 @@ Arguments:
 	  libs (seq-filter
 		(lambda (inst)
 		  (unboxed-data-library-p
-		   (unboxed-installed-file-file inst)))
+		   (symbol-name (unboxed-installed-file-file inst))))
 		installed)
 	  elcs (mapcan
 		(lambda (inst)

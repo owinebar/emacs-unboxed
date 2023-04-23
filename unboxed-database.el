@@ -376,7 +376,7 @@ Arguments:
 		(setq pkg-dir (file-name-nondirectory pkg-dir))
 		(when (string-prefix-p pkg-prefix pkg-dir)
 		  (setq version (substring pkg-dir (length pkg-prefix)))))
-	      (setq upd (unboxed--init-package-desc 'package pd version))
+	      (setq upd (unboxed--make-package-desc 'package pd version))
 	      (setf (unboxed-package-desc-single upd)
 		    (unboxed-package-single-p pd))
 	      (setf (unboxed-package-desc-simple upd)
@@ -418,7 +418,8 @@ Arguments:
 
 (defun unboxed--save-database (db)
   "Save the database DB."
-  (let ((db-path (unboxed--area-db-path area)))
+  (let ((db-path (unboxed--area-db-path area))
+	(print-circle t))
     (with-temp-buffer
       (pp db (current-buffer))
       (if (file-exists-p db-path)
