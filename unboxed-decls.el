@@ -35,8 +35,8 @@
 
 
 (defun queue-remq (q elt)
-  "Remove all occurence of ELT from queue Q"
-  (let ((ls (delq elt (queue-all)))
+  "Remove all occurence of ELT from queue Q."
+  (let ((ls (delq elt (queue-all q)))
 	tail0 tail1)
     (setq tail0 ls)
     (when (consp tail0)
@@ -48,12 +48,12 @@
   q)
 
 (defun queue-remove (q elt)
-  "Remove all occurence of ELT from queue Q"
+  "Remove all occurence of ELT from queue Q."
   (let ((head (queue-all q))
 	 ls
 	tail0 tail1)
     (setq ls (delete elt head)
-	  (setq tail0 ls))
+	  tail0 ls)
     (when (consp tail0)
       (setq tail1 (cdr tail0)))
     (while tail1
@@ -63,12 +63,12 @@
   q)
 
 (defun queue-filter (q pred)
-  "Remove all occurence of ELT from queue Q"
+  "Remove all elements satisfying PRED from queue Q."
   (let ((head (queue-all q))
 	 ls
 	tail0 tail1)
     (setq ls (seq-filter pred head)
-	  (setq tail0 ls))
+	  tail0 ls)
     (when (consp tail0)
       (setq tail1 (cdr tail0)))
     (while tail1
@@ -78,6 +78,7 @@
   q)
 
 (defun unboxed--get-package-desc-version (pd)
+  "Get the version string from package-desc PD directory name."
   (let ((version "")
 	pkg pkg-dir pkg-prefix)
     (setq pkg-dir (package-desc-dir pd))
@@ -133,28 +134,36 @@ or site packages
     result))
 
 (cl-defstruct (unboxed--db-files
-	       (:constructor unboxed--db-state-create)
-	       (:copier unboxed--db-state-copy))
-  "Collection of files associated with packages in db
+	       (:constructor unboxed--db-files-create)
+	       (:copier unboxed--db-files-copy))
+  "Collection of files associated with packages in db.
   Slots:
   `files' - set of unboxed source- or installed- file objects
   `locations' - list of source- or installed- files associated to each category"
   (files (make-hash-table))
   (locations (make-queue)))
 
+(cl-defstruct (unboxed--db-packages
+	       (:constructor unboxed--db-packages-create)
+	       (:copier unboxed--db-packages-copy))
+  "Collection of package descriptors which all belong to the same db.
+  Slots:
+  `descs' map of versioned package names to unboxed package desc object
+  `named' - map package symbols to queue of versions in boxed area"
+  (descs (make-hash-table))
+  (named (make-hash-table)))
+
 (cl-defstruct (unboxed--db-state
 	       (:constructor unboxed--db-state-create)
 	       (:copier unboxed--db-state-copy))
   "Database state
   Slots:
-  `package-descs' set of unboxed package desc object
-  `packages' - map package symbols to list of versions in boxed area
+  `packages' - unboxed--db-packages collection
   `files' - unboxed--db-files collection"
-  (package-descs (make-hash-table))
-  (packages (make-hash-table))
+  (packages (unboxed--db-packages-create))
   (files (unboxed--db-files-create)))
 
-	      
+;;; this delta is for changes against activated packages
 (cl-defstruct (unboxed--db-delta
 	       (:constructor unboxed--db-delta-create)
 	       (:copier unboxed--db-delta-copy))
@@ -164,6 +173,17 @@ or site packages
   `install' the db state requiring installation"
   (remove (unboxed--db-state-create))
   (install (unboxed--db-state-create)))
+
+;;; this delta is for changes in available packages
+(cl-defstruct (unboxed--db-packages-delta
+	       (:constructor unboxed--db-packages-delta-create)
+	       (:copier unboxed--db-packages-delta-copy))
+  "The difference between two sets of packages.
+  Slots:
+  `remove' the db-packages to eliminate
+  `install' the db-packages requiring installation"
+  (remove (unboxed--db-packages-create))
+  (install (unboxed--db-packages-create)))
 
 
 (cl-defstruct (unboxed--transaction
@@ -184,10 +204,45 @@ or site packages
   (final (unboxed--db-state-create))
   on-completion)
 
+(defun unboxed--make-transaction-delta (pkgs-remove pkgs-add)
+  "Make a transaction-delta removing PKGS-REMOVE and installing PKGS-ADD."
+  (let ((delta (unboxed--db-delta-create))
+	ls pkg state)
+    (when (or pkgs-remove pkgs-add)
+      (setq ls pkgs-remove
+	    state (unboxed--db-delta-remove delta))
+      (while ls
+	(setq pkg (pop ls))
+	(unboxed--add-package-to-db-state state pkg))
+      (setq ls pkgs-add
+	    state (unboxed--db-delta-install delta))
+      (while ls
+	(setq pkg (pop ls))
+	(unboxed--add-package-to-db-state state pkg)))
+    delta))
+
+       
+(defun unboxed--make-transaction (db &optional pkgs-remove pkgs-add on-completion)
+  "Make a transaction for database DB.
+Arguments:
+  `DB' - database subject to transaction
+  `PKGS-REMOVE' - list of package descriptors to remove from active set
+  `PKGS-ADD' - list of package descriptor to install into active set
+  `ON-COMPLETION' - continuation to invoke after removals and installations
+                    are completed"
+  (let ((txn (unboxed--transaction-create
+	      :db db
+	      :on-completion on-completion
+	      :initial (unboxed--copy-db-state
+			(unboxed--sexpr-db-active db))
+	      :todo (unboxed--make-transaction-delta pkgs-remove pkgs-add))))
+    txn))
+    
+
 ;; note - it's entirely possible for a site to have one version of unboxed installed
 ;; and for a user to have another version installed.  Therefore, we record
 ;; the layout of structures in structure itself to allow some forward/backward
-;; compatibility
+;; compatibility - eventually
 (cl-defstruct (unboxed--sexpr-db
 	       (:constructor unboxed--sexpr-db-create)
 	       (:copier unboxed--sexpr-db-copy))
@@ -204,8 +259,8 @@ available for loading.
   layouts
   areas
   area
-  (available (unboxed--db-state))
-  (active (unboxed--db-state)))
+  (available (unboxed--db-state-create))
+  (active (unboxed--db-state-create)))
 
 (defun unboxed--sexpr-db-name (db)
   "Return the name of DB."
@@ -357,24 +412,29 @@ installation manager
   (files (unboxed--db-files-create)))
 
 (defun unboxed-package-desc-area (pd)
+  "Area of package descriptor PD."
   (unboxed--sexpr-db-area
    (unboxed-package-desc-db pd)))
 
 (defun unboxed-package-desc-areas (pd)
+  "Areas of package descriptor PD."
   (unboxed--sexpr-db-areas
    (unboxed-package-desc-db pd)))
 
 (defun unboxed--make-package-desc-id (pd)
+  "Construct identifier of package descriptor PD."
   (let ((name (unboxed-package-desc-name pd))
 	(vs (unboxed-package-desc-version-string pd)))
     (intern (concat (symbol-name name) "#" vs))))
 
 (defun unboxed--make-installed-file-id (inst)
+  "Construct identifier of installed file INST."
   (let ((name (unboxed-installed-file-file inst))
 	(vs (unboxed-installed-file-version inst)))
     (intern (concat (symbol-name name) "#" vs))))
 
 (defun unboxed--make-source-file-id (src)
+  "Construct identifier of source file SRC."
   (let ((name (symbol-name (unboxed-source-file-file src)))
 	(vs (unboxed-source-file-version src))
 	(pkg (symbol-name (unboxed-source-file-package src))))
@@ -399,7 +459,6 @@ installation manager
 (defun unboxed-package-simple-p (pd)
   "Test whether package descriptor PD is for a package with no subdirectories."
   (let ((d (package-desc-dir pd))
-	(name (symbol-name (package-desc-name pd)))
 	(no-subdirs t)
 	all fn)
     (setq all (directory-files d t "^[^.].*$"))
@@ -408,84 +467,105 @@ installation manager
 	    no-subdirs (not (file-directory-p fn))))
     no-subdirs))
 
-(defun unboxed-package-any-p (pd)
+(defun unboxed-package-any-p (_pd)
   "Test that succeeds for any package descriptor PD."
+  ;; shut up byte-compiler
   t)
 
-(defun unboxed-package-none-p (pd)
+(defun unboxed-package-none-p (_pd)
   "Test that fails for any package descriptor PD."
+  ;; shut up byte-compiler
   nil)
 
 (defun unboxed-source-file-version (src)
+  "Get version string of package containing source file SRC."
   (unboxed-package-desc-version-string
    (unboxed-source-file-package-desc src)))
 
 (defun unboxed-source-file-package-location (src)
-  (unboxed-package-desc-dir 
+  "Get location of package containing source file SRC."
+  (unboxed-package-desc-dir
    (unboxed-source-file-package-desc src)))
 
 (defun unboxed-source-file-package (src)
-  (unboxed-package-desc-name 
+  "Get name of package containing source file SRC."
+  (unboxed-package-desc-name
    (unboxed-source-file-package-desc src)))
    
 (defun unboxed-source-file-category (src)
+  "Get category name of package containing source file SRC."
   (unboxed-file-category-name
    (unboxed-source-file-db-category src)))
    
 (defun unboxed-source-file-category-location (src)
+  "Get category location of package containing source file SRC."
   (unboxed-file-category-location
    (unboxed-source-file-db-category src)))
 
 (defun unboxed-installed-file-package-desc (inst)
+  "Get package descriptor of package containing installed file INST."
   (unboxed-source-file-package-desc
    (unboxed-installed-file-source inst)))
 
 (defun unboxed-installed-file-version (inst)
+  "Get version string of package containing installed file INST."
   (unboxed-package-desc-version-string
    (unboxed-installed-file-package-desc inst)))
 
 (defun unboxed-installed-file-package-location (inst)
-  (unboxed-package-desc-dir 
+  "Get location of package containing installed file INST."
+  (unboxed-package-desc-dir
    (unboxed-installed-file-package-desc inst)))
 
 (defun unboxed-installed-file-package (inst)
-  (unboxed-package-desc-name 
+  "Get name of package containing installed file INST."
+  (unboxed-package-desc-name
    (unboxed-installed-file-package-desc inst)))
    
 (defun unboxed-installed-file-db-category (inst)
+  "Get category containing installed file INST."
   (unboxed-source-file-db-category
-   (unboxed-source-file inst)))
+   (unboxed-installed-file-source inst)))
 
 (defun unboxed-installed-file-category (inst)
+  "Get name of category containing installed file INST."
   (unboxed-file-category-name
    (unboxed-installed-file-db-category inst)))
    
 (defun unboxed-installed-file-category-location (inst)
+  "Get location of category containing installed file INST."
   (unboxed-file-category-location
    (unboxed-installed-file-db-category inst)))
    
-(defun unboxed--make-category-queue-alist (cats)
-  "Make an alist of queues for category set CATS."
-  (mapcar (lambda (c-pr)
-	    `(,(unboxed-file-category-name (cdr c-pr)) . ,(ajq--make-queue)))
-	  cats))
+(defun unboxed--make-category-queue-aqueue (cats)
+  "Make an aqueue of queues for category set CATS."
+  (let ((q (make-queue))
+	(ls cats)
+	c-pr)
+    (while ls
+      (setq c-pr (pop ls))
+      (queue-enqueue q
+		     `(,(unboxed-file-category-name (cdr c-pr))
+		       .
+		       ,(ajq--make-queue))))
+    q))
 
 (defun unboxed--exists-source-file-in-cat-queue-p (src aq)
   "Test whether source-file with same category and file as SRC exists in aqueue AQ."
-  (let ((cat (unboxed-source-file-category inst))
-	(file (unboxed-source-file-file inst))
+  (let ((cat (unboxed-source-file-category src))
+	(file (unboxed-source-file-file src))
 	pr)
     (setq pr (assq cat (queue-all aq)))
     ;; (unless pr
     ;;   (signal 'unboxed-invalid-category `(,inst ,als)))
     (when pr
       (seq-some (cdr pr)
-		(lambda (inst)
+		(lambda (src1)
 		  (eq file
-		      (unboxed-source-file-file inst)))))))
+		      (unboxed-source-file-file src1)))))))
       
 (defun unboxed--exists-installed-file-in-cat-queue-p (inst aq)
-  "Test whether installed-file with same category and file as INST exists in aqueue AQ."
+  "Test whether INST exists in category aqueue AQ."
   (let ((cat (unboxed-installed-file-category inst))
 	(file (unboxed-installed-file-file inst))
 	pr)
@@ -515,7 +595,7 @@ installation manager
 ;; for use in a package-specific set of source files
 (defun unboxed--add-source-file (src sources)
   "Add source file SRC to hash table SOURCES by its package relative path."
-  (let ((k (unboxed--source-file-file src))
+  (let ((k (unboxed-source-file-file src))
 	q)
     (setq q (or (gethash k sources)
 		(puthash k (make-queue) sources)))
@@ -524,8 +604,8 @@ installation manager
 
 ;; for use in db-specific set of source files
 (defun unboxed--add-source-file-id (src sources)
-  "Add source file SRC to hash table SOURCES by its identity"
-  (let ((k (unboxed--source-file-file src))
+  "Add source file SRC to hash table SOURCES by its identity."
+  (let ((k (unboxed-source-file-file src))
 	q)
     (setq q (or (gethash k sources)
 		(puthash k (make-queue) sources)))
@@ -546,43 +626,70 @@ installation manager
   aq)
 
 (defun unboxed--get-cat-queue (aq catname)
-  "Return queue asociated with CATNAME in association-queue AQ"
-  (let ((q (assq cat (queue-all aq))))
+  "Return queue asociated with CATNAME in association-queue AQ."
+  (let ((q (assq catname (queue-all aq))))
     (when q
       (setq q (cdr q)))
     q))
 
-(defun unboxed--add-installed-file (inst installed)
-  "Add installed file INST to hash table INSTALLED by its standard id."
-  (let ((k (unboxed--installed-file-id inst))
-	q)
-    (setq q (or (gethash k installed)
-		(puthash k (make-queue) installed)))
-    (queue-enqueue q inst))
-  installed)
-
 (defun unboxed--add-installed-file-source (inst sources)
-  "Add installed file INST to hash table SOURCES by its source path"
-  (let ((k (unboxed--installed-file-source inst))
+  "Add installed file INST to hash table SOURCES by its source path."
+  (let ((k (unboxed-installed-file-source inst))
 	q)
     (setq q (or (gethash k sources)
 		(puthash k (make-queue) sources)))
     (queue-enqueue q inst))
   sources)
 
-(defun unboxed--add-installed-file-to-files (files inst)
+(defun unboxed--add-installed-file (inst installed)
+  "Add installed file INST to hash table INSTALLED by its standard id."
+  (let ((k (unboxed-installed-file-id inst))
+	q)
+    (setq q (or (gethash k installed)
+		(puthash k (make-queue) installed)))
+    (queue-enqueue q inst))
+  installed)
+
+(defun unboxed--remove-installed-file (inst installed)
+  "Remove installed file INST from hash table INSTALLED by its standard id."
+  (remhash (unboxed-installed-file-id inst) installed)
+  installed)
+
+(defun unboxed--remove-installed-file-from-cat-queue (inst aq)
+  "Add installed-file INST to aqueue AQ."
+  (let ((cat (unboxed-installed-file-category inst))
+	pr q)
+    (setq pr (assq cat (queue-all aq)))
+    ;; (unless pr
+    ;;   (signal 'unboxed-invalid-category `(,inst ,als)))
+    (when pr
+      (setq q (cdr pr)))
+    (queue-remove q inst)
+    aq))
+
+
+(defun unboxed--add-installed-file-to-db-files (files inst)
   "Add INST to FILES."
-  (unboxed--add-installed-file-to-cat-queue 
+  (unboxed--add-installed-file-to-cat-queue
    inst
-   (unboxed--db-files-locations state))
+   (unboxed--db-files-locations files))
   (unboxed--add-installed-file
    inst
-   (unboxed--transaction-state-files state)))
+   (unboxed--db-files-files files)))
 
-(defun unboxed--add-source-file-to-files (files src)
-  "Add SRC to FILES."
-  (unboxed--add-source-file-to-cat-queue 
+(defun unboxed--remove-installed-file-from-db-files (files inst)
+  "Remove INST to FILES."
+  (unboxed--remove-installed-file-from-cat-queue
    inst
+   (unboxed--db-files-locations files))
+  (unboxed--remove-installed-file
+   inst
+   (unboxed--db-files-files files)))
+
+(defun unboxed--add-source-file-to-db-files (files src)
+  "Add SRC to FILES."
+  (unboxed--add-source-file-to-cat-queue
+   src
    (unboxed--db-files-locations files))
   (unboxed--add-source-file
    src
@@ -605,6 +712,23 @@ installation manager
 		(puthash k (make-queue) packages)))
     (queue-enqueue q pd))
   packages)
+
+(defun unboxed--remove-package-name (pd packages)
+  "Remove package descriptor PD from hash table PACKAGES by its name."
+  (let ((k (unboxed-package-desc-name pd))
+	q)
+    (setq q (gethash k packages))
+    (when q
+      (queue-remove q pd)))
+  packages)
+
+(defun unboxed--remove-package-id (pd packages)
+  "Remove package descriptor PD to hash table PACKAGES by its name."
+  ;; There should never be a queue with more or less than 1 element
+  ;; assigned to a versioned package identifier
+  (remhash (unboxed-package-desc-id pd) packages)
+  packages)
+
 
 (defun unboxed--make-source-file (pd cat file)
   "Make installed-file structure.
@@ -629,7 +753,7 @@ Arguments:
 	 (unboxed-installed-file-create :source src
 					:file dst-file)))
     (setf (unboxed-installed-file-id inst)
-	  (unboxed--make-installed-file-key inst))
+	  (unboxed--make-installed-file-id inst))
     inst))
 
 
@@ -639,13 +763,8 @@ Arguments:
   (let ((db (unboxed-package-desc-db pd))
 	(pd-files (unboxed-package-desc-files pd))
 	(pkg-dir (file-name-as-directory (unboxed-package-desc-dir pd)))
-	area pkgs installed
-	cats ls install-files cat-pred cat-files noncat-files N
-	cat-name cat-installed-files-pair
-	cat-installed-files all-installed pr)
+	area cats ls cat-pred noncat-files N)
     (setq area (unboxed--sexpr-db-area db)
-	  pkgs (unboxed--sexpr-db-packages db)
-	  installed (unboxed--sexpr-db-installed db)
 	  cats (unboxed--area-categories area)
 	  ls cats
 	  N (length pkg-dir)
@@ -653,14 +772,13 @@ Arguments:
 			(directory-files-recursively pkg-dir "")))
     (while ls
       (setq cat (cdr (pop ls))
-	    cat-files (make-queue)
 	    noncat-files (make-queue)
 	    cat-pred (unboxed-file-category-predicate cat))
       (mapc (lambda (fn)
 	      (if (funcall cat-pred fn)
-		  (unboxed--add-source-file-to-files
+		  (unboxed--add-source-file-to-db-files
 		   pd-files
-		   (make-source-file pd cat fn))
+		   (unboxed--make-source-file pd cat fn))
 		(queue-enqueue noncat-files fn)))
 	    files))
     pd-files))
@@ -675,7 +793,9 @@ Arguments:
   (let ((version (unboxed--get-package-desc-version pd))
 	s n)
     (setq s (unboxed-package-desc-create
-	     :manager 'package
+	     :manager mgr
+	     :single (unboxed-package-single-p pd)
+	     :simple (unboxed-package-simple-p pd)
 	     :version-string version)
 	  n (length pd))
     (if (recordp s)
@@ -696,15 +816,156 @@ Arguments:
 	  (unboxed--catalog-package-files s))
     s))
 
-(defun unboxed--add-package-to-db-state (state pd)
-  "Add package descriptor PD to STATE."
+(defun unboxed--add-package-to-db-packages (db-pkgs pd)
+  "Add package descriptor PD to DB-PKGS."
   (unboxed--add-package-name
    pd
-   (unboxed--db-state-packages state))
+   (unboxed--db-packages-named db-pkgs))
   (unboxed--add-package-id
-   inst
-   (unboxed--db-state-package-descs state)))
+   pd
+   (unboxed--db-packages-descs db-pkgs)))
 
+(defun unboxed--remove-package-from-db-packages (db-pkgs pd)
+  "Add package descriptor PD to DB-PKGS."
+  (unboxed--remove-package-name
+   pd
+   (unboxed--db-packages-named db-pkgs))
+  (unboxed--remove-package-id
+   pd
+   (unboxed--db-packages-descs db-pkgs)))
+
+(defun unboxed--add-package-to-db-state (state pd)
+  "Add package descriptor PD to STATE."
+  (unboxed--add-package-to-db-packages
+   pd
+   (unboxed--db-state-packages state)))
+
+(defun unboxed--remove-package-from-db-state (state pd)
+  "Add package descriptor PD to STATE."
+  (unboxed--remove-package-from-db-packages
+   pd
+   (unboxed--db-state-packages state)))
+
+(defun unboxed--add-installed-file-to-db-state (state inst)
+  "Add installed-file INST to STATE."
+  (unboxed--add-installed-file-to-db-files
+   inst
+   (unboxed--db-state-files state)))
+
+(defun unboxed--remove-installed-file-from-db-state (state inst)
+  "Remove installed-file INST from STATE."
+  (unboxed--remove-installed-file-from-db-files
+   inst
+   (unboxed--db-state-files state)))
+
+
+(defun unboxed--add-package-to-db-packages-delta-remove (delta pd)
+  "Add package descriptor PD to DELTA remove."
+  (unboxed--add-package-to-db-packages
+   pd
+   (unboxed--db-packages-delta-remove delta)))
+(defun unboxed--add-package-to-db-packages-delta-install (delta pd)
+  "Add package descriptor PD to DELTA install."
+  (unboxed--add-package-to-db-packages
+   pd
+   (unboxed--db-packages-delta-install delta)))
+
+(defun unboxed--remove-package-from-db-packages-delta-remove (delta pd)
+  "Remove package descriptor PD from DELTA remove."
+  (unboxed--remove-package-from-db-packages
+   pd
+   (unboxed--db-packages-delta-remove delta)))
+(defun unboxed--remove-package-from-db-packages-delta-install (delta pd)
+  "Remove package descriptor PD from DELTA install."
+  (unboxed--remove-package-from-db-packages
+   pd
+   (unboxed--db-packages-delta-install delta)))
+
+
+(defun unboxed--add-package-to-db-delta-remove (delta pd)
+  "Add package descriptor PD to DELTA remove."
+  (unboxed--add-package-to-db-state
+   pd
+   (unboxed--db-delta-remove delta)))
+(defun unboxed--add-package-to-db-delta-install (delta pd)
+  "Add package descriptor PD to DELTA install."
+  (unboxed--add-package-to-db-state
+   pd
+   (unboxed--db-delta-install delta)))
+
+(defun unboxed--remove-package-from-db-delta-remove (delta pd)
+  "Remove package descriptor PD from DELTA remove."
+  (unboxed--remove-package-from-db-state
+   pd
+   (unboxed--db-delta-remove delta)))
+(defun unboxed--remove-package-from-db-delta-install (delta pd)
+  "Remove package descriptor PD from DELTA install."
+  (unboxed--remove-package-from-db-state
+   pd
+   (unboxed--db-delta-install delta)))
+
+(defun unboxed--add-installed-file-to-db-delta-remove (delta inst)
+  "Add installed-file INST to DELTA remove."
+  (unboxed--add-installed-file-to-db-state
+   inst
+   (unboxed--db-delta-remove delta)))
+(defun unboxed--add-installed-file-to-db-delta-install (delta inst)
+  "Add installed-file INST to DELTA install."
+  (unboxed--add-installed-file-to-db-state
+   inst
+   (unboxed--db-delta-install delta)))
+
+(defun unboxed--remove-installed-file-from-db-delta-remove (delta inst)
+  "Remove installed-file INST from DELTA remove."
+  (unboxed--remove-installed-file-from-db-state
+   inst
+   (unboxed--db-delta-remove delta)))
+(defun unboxed--remove-installed-file-from-db-delta-install (delta inst)
+  "Remove installed-file INST from DELTA install."
+  (unboxed--remove-installed-file-from-db-state
+   inst
+   (unboxed--db-delta-install delta)))
+
+(defun unboxed--enact-transaction-remove-package (txn pd)
+  "Move package descriptor PD from `remove' todo to done of transaction TXN."
+  (let ((todo (unboxed--transaction-todo txn))
+	(done (unboxed--transaction-done txn)))
+    (unboxed--remove-package-from-db-delta-remove todo pd)
+    (unboxed--add-package-to-db-delta-remove done pd)
+    txn))
+
+(defun unboxed--enact-transaction-install-package (txn pd)
+  "Move package descriptor PD from `install' todo to done of transaction TXN."
+  (let ((todo (unboxed--transaction-todo txn))
+	(done (unboxed--transaction-done txn)))
+    (unboxed--remove-package-from-db-delta-install todo pd)
+    (unboxed--add-package-to-db-delta-install done pd)
+    txn))
+
+(defun unboxed--enact-transaction-remove-file (txn inst)
+  "Move installed-file INST from `remove' todo to done of transaction TXN."
+  (let ((todo (unboxed--transaction-todo txn))
+	(done (unboxed--transaction-done txn)))
+    (unboxed--remove-installed-file-from-db-delta-remove todo inst)
+    (unboxed--add-installed-file-to-db-delta-remove done inst)
+    txn))
+
+(defun unboxed--enact-transaction-install-file (txn inst)
+  "Move installed-file INST from `install' todo to done of transaction TXN."
+  (let ((todo (unboxed--transaction-todo txn))
+	(done (unboxed--transaction-done txn)))
+    (unboxed--remove-installed-file-from-db-delta-install todo inst)
+    (unboxed--add-installed-file-to-db-delta-install done inst)
+    txn))
+
+(defun unboxed--get-package-from-state-by-name (state pkg-name)
+  "Get package descriptor for PKG-NAME from db state STATE."
+  (let ((q (gethash pkg-name
+		    (unboxed--db-packages-named
+		     (unboxed--db-state-packages state)))))
+    (when (and q (not (queue-empty q)))
+      (queue-first q))))
+  
 (defun unboxed--make-boxed-db-state (packages)
   "Initialize a db state for list of package descriptors PACKAGES."
   (let ((state (unboxed--db-state-create))
@@ -720,9 +981,9 @@ Arguments:
 (defun unboxed--copy-source-db-files (files)
   "Copy source-file collection FILES."
   (let ((new-files (unboxed--db-files-create)))
-    (maphash (lambda (key aq)
+    (maphash (lambda (_key aq)
 	       (mapc (lambda (src)
-		       (unboxed--add-source-file-to-files new-files src))
+		       (unboxed--add-source-file-to-db-files new-files src))
 		     (queue-all aq)))
 	     (unboxed--db-files-files files))
     new-files))
@@ -730,7 +991,7 @@ Arguments:
 (defun unboxed--copy-installed-db-files (files)
   "Copy installed-file collection FILES."
   (let ((new-files (unboxed--db-files-create)))
-    (maphash (lambda (key aq)
+    (maphash (lambda (_key aq)
 	       (mapc (lambda (inst)
 		       (unboxed--add-installed-file-to-files new-files inst))
 		     (queue-all aq)))
@@ -740,12 +1001,13 @@ Arguments:
 (defun unboxed--copy-db-state (state)
   "Copy db-state STATE."
   (let ((new-state (unboxed--db-state-create)))
-    (maphash (lambda (key aq)
+    (maphash (lambda (_key aq)
 	       (mapc (lambda (pd)
-		       (unboxed--add-package-desc-to-state new-state pd))
+		       (unboxed--add-package-to-db-state new-state pd))
 		     (queue-all aq)))
-	     (unboxed--db-state-package-descs files))
-    new-files))
+	     (unboxed--db-packages-descs
+	      (unboxed--db-state-packages state)))
+    new-state))
 
 
 (defconst unboxed--file-category-customization-type
