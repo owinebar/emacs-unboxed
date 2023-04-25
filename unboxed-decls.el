@@ -185,6 +185,59 @@ or site packages
   (remove (unboxed--db-packages-create))
   (install (unboxed--db-packages-create)))
 
+(cl-defstruct (unboxed--packages-transaction
+	       (:constructor unboxed--packages-transaction-create)
+	       (:copier unboxed--packages-transaction-copy))
+  "Structure holding data for packages transaction in-progress.
+  Slots:
+  `db' Database subject to the transaction
+  `initial'  The initial packages collection as a db-packages
+  `todo' The changes to be made by the transaction as a db-packages-delta
+  `done' The changes already made by the transaction as a db-packages-delta
+  `final' The final packages collection as a db-packages
+  `on-completion' continuation invoked when transaction is complete"
+  db
+  (initial (unboxed--db-packages-create))
+  (todo (unboxed--db-packages-delta-create))
+  (done (unboxed--db-packages-delta-create))
+  (final (unboxed--db-packages-create))
+  on-completion)
+
+(defun unboxed--make-db-packages-delta (pkgs-remove pkgs-add)
+  "Make a db-packages-delta removing PKGS-REMOVE and installing PKGS-ADD."
+  (let ((delta (unboxed--db-packages-delta-create))
+	ls pkg packages)
+    (when (or pkgs-remove pkgs-add)
+      (setq ls pkgs-remove
+	    packages (unboxed--db-packages-delta-remove delta))
+      (while ls
+	(setq pkg (pop ls))
+	(unboxed--add-package-to-db-packages packages pkg))
+      (setq ls pkgs-add
+	    packages (unboxed--db-packages-delta-install delta))
+      (while ls
+	(setq pkg (pop ls))
+	(unboxed--add-package-to-db-packages packages pkg)))
+    delta))
+
+       
+(defun unboxed--make-packages-transaction (db &optional pkgs-remove pkgs-add on-completion)
+  "Make a transaction for database DB.
+Arguments:
+  `DB' - database subject to transaction
+  `PKGS-REMOVE' - list of package descriptors to remove from available set
+  `PKGS-ADD' - list of package descriptor to install into available set
+  `ON-COMPLETION' - continuation to invoke after removals and installations
+                    are completed"
+  (let ((txn (unboxed--packages-transaction-create
+	      :db db
+	      :on-completion on-completion
+	      :initial (unboxed--copy-db-packages
+			(unboxed--sexpr-db-available db))
+	      :todo (unboxed--make-db-packages-delta pkgs-remove pkgs-add))))
+    txn))
+    
+
 
 (cl-defstruct (unboxed--transaction
 	       (:constructor unboxed--transaction-create)
@@ -204,7 +257,7 @@ or site packages
   (final (unboxed--db-state-create))
   on-completion)
 
-(defun unboxed--make-transaction-delta (pkgs-remove pkgs-add)
+(defun unboxed--make-db-delta (pkgs-remove pkgs-add)
   "Make a transaction-delta removing PKGS-REMOVE and installing PKGS-ADD."
   (let ((delta (unboxed--db-delta-create))
 	ls pkg state)
@@ -235,7 +288,7 @@ Arguments:
 	      :on-completion on-completion
 	      :initial (unboxed--copy-db-state
 			(unboxed--sexpr-db-active db))
-	      :todo (unboxed--make-transaction-delta pkgs-remove pkgs-add))))
+	      :todo (unboxed--make-db-delta pkgs-remove pkgs-add))))
     txn))
     
 
@@ -926,7 +979,7 @@ Arguments:
    inst
    (unboxed--db-delta-install delta)))
 
-(defun unboxed--enact-transaction-remove-package (txn pd)
+(defun unboxed--apply-transaction-remove-package (txn pd)
   "Move package descriptor PD from `remove' todo to done of transaction TXN."
   (let ((todo (unboxed--transaction-todo txn))
 	(done (unboxed--transaction-done txn)))
@@ -934,7 +987,7 @@ Arguments:
     (unboxed--add-package-to-db-delta-remove done pd)
     txn))
 
-(defun unboxed--enact-transaction-install-package (txn pd)
+(defun unboxed--apply-transaction-install-package (txn pd)
   "Move package descriptor PD from `install' todo to done of transaction TXN."
   (let ((todo (unboxed--transaction-todo txn))
 	(done (unboxed--transaction-done txn)))
@@ -942,7 +995,7 @@ Arguments:
     (unboxed--add-package-to-db-delta-install done pd)
     txn))
 
-(defun unboxed--enact-transaction-remove-file (txn inst)
+(defun unboxed--apply-transaction-remove-file (txn inst)
   "Move installed-file INST from `remove' todo to done of transaction TXN."
   (let ((todo (unboxed--transaction-todo txn))
 	(done (unboxed--transaction-done txn)))
@@ -950,13 +1003,30 @@ Arguments:
     (unboxed--add-installed-file-to-db-delta-remove done inst)
     txn))
 
-(defun unboxed--enact-transaction-install-file (txn inst)
+(defun unboxed--apply-transaction-install-file (txn inst)
   "Move installed-file INST from `install' todo to done of transaction TXN."
   (let ((todo (unboxed--transaction-todo txn))
 	(done (unboxed--transaction-done txn)))
     (unboxed--remove-installed-file-from-db-delta-install todo inst)
     (unboxed--add-installed-file-to-db-delta-install done inst)
     txn))
+
+(defun unboxed--apply-packages-transaction-remove (txn pd)
+  "Move package descriptor PD from `remove' todo to done of transaction TXN."
+  (let ((todo (unboxed--packages-transaction-todo txn))
+	(done (unboxed--packages-transaction-done txn)))
+    (unboxed--remove-package-from-db-packages-delta-remove todo pd)
+    (unboxed--add-package-to-db-packages-delta-remove done pd)
+    txn))
+
+(defun unboxed--apply-packages-transaction-install (txn pd)
+  "Move package descriptor PD from `install' todo to done of transaction TXN."
+  (let ((todo (unboxed--packages-transaction-todo txn))
+	(done (unboxed--packages-transaction-done txn)))
+    (unboxed--remove-package-from-db-packages-delta-install todo pd)
+    (unboxed--add-package-to-db-packages-delta-install done pd)
+    txn))
+
 
 (defun unboxed--get-package-from-state-by-name (state pkg-name)
   "Get package descriptor for PKG-NAME from db state STATE."
@@ -998,15 +1068,24 @@ Arguments:
 	     (unboxed--db-files-files files))
     new-files))
 
-(defun unboxed--copy-db-state (state)
-  "Copy db-state STATE."
-  (let ((new-state (unboxed--db-state-create)))
+(defun unboxed--copy-db-packages (packages)
+  "Copy db-packages PACKAGES."
+  (let ((new-pkgs (unboxed--db-packages-create)))
     (maphash (lambda (_key aq)
 	       (mapc (lambda (pd)
-		       (unboxed--add-package-to-db-state new-state pd))
+		       (unboxed--add-package-to-db-packages new-pkgs pd))
 		     (queue-all aq)))
-	     (unboxed--db-packages-descs
-	      (unboxed--db-state-packages state)))
+	     (unboxed--db-packages-descs packages))
+    new-pkgs))
+
+(defun unboxed--copy-db-state (state)
+  "Copy db-state STATE."
+  (let ((new-state
+	 (unboxed--db-state-create
+	  :packages (unboxed--copy-db-packages
+		     (unboxed--db-state-packages state))
+	  :files (unboxed--copy-installed-db-files
+		     (unboxed--db-state-files state)))))
     new-state))
 
 
