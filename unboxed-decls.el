@@ -229,8 +229,8 @@ or site packages
       (setq ls files-add
 	    files (unboxed--db-files-delta-install delta))
       (while ls
-	(setq pkg (pop ls))
-	(unboxed--add-file-to-db-files files file)))
+	(setq file (pop ls))
+	(unboxed--add-installed-file-to-db-files files file)))
     delta))
 
 (defun unboxed--make-db-files-transaction (db &optional files-remove files-add on-completion)
@@ -244,7 +244,7 @@ Arguments:
   (let ((txn (unboxed--packages-transaction-create
 	      :db db
 	      :on-completion on-completion
-	      :initial (unboxed--copy-db-files
+	      :initial (unboxed--copy-installed-db-files
 			(unboxed--sexpr-db-active db))
 	      :todo (unboxed--make-db-files-delta files-remove files-add))))
     txn))
@@ -526,7 +526,7 @@ installation manager
   simple
   (version-string "0")
   (manager 'package)
-  (files (unboxed--db-files-create)))
+  files)
 
 (defun unboxed-package-desc-area (pd)
   "Area of package descriptor PD."
@@ -931,8 +931,8 @@ Arguments:
 			 pd)))
     (setf (unboxed-package-desc-id s)
 	  (unboxed--make-package-desc-id s))
-    (setf (unboxed-package-desc-files s)
-	  (unboxed--catalog-package-files s))
+    ;; (setf (unboxed-package-desc-files s)
+    ;; 	  (unboxed--catalog-package-files s))
     s))
 
 (defun unboxed--add-package-to-db-packages (db-pkgs pd)
