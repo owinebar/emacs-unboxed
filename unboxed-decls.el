@@ -185,6 +185,71 @@ or site packages
   (remove (unboxed--db-packages-create))
   (install (unboxed--db-packages-create)))
 
+;;; this delta is for changes in installed files not involving changes in packages
+;;; e.g. byte-compiling libraries or updating the dir info file
+(cl-defstruct (unboxed--db-files-delta
+	       (:constructor unboxed--db-files-delta-create)
+	       (:copier unboxed--db-files-delta-copy))
+  "The difference between two sets of installed files.
+  Slots:
+  `remove' the db-files to eliminate
+  `install' the db-files requiring installation"
+  (remove (unboxed--db-files-create))
+  (install (unboxed--db-files-create)))
+
+
+(cl-defstruct (unboxed--db-files-transaction
+	       (:constructor unboxed--db-files-transaction-create)
+	       (:copier unboxed--db-files-transaction-copy))
+  "Structure holding data for packages transaction in-progress.
+  Slots:
+  `db' Database subject to the transaction
+  `initial'  The initial files collection as a db-files
+  `todo' The changes to be made by the transaction as a db-files-delta
+  `done' The changes already made by the transaction as a db-files-delta
+  `final' The final files collection as a db-files
+  `on-completion' continuation invoked when transaction is complete"
+  db
+  (initial (unboxed--db-files-create))
+  (todo (unboxed--db-files-delta-create))
+  (done (unboxed--db-files-delta-create))
+  (final (unboxed--db-files-create))
+  on-completion)
+
+(defun unboxed--make-db-files-delta (files-remove files-add)
+  "Make a db-files-delta removing FILES-REMOVE and installing FILES-ADD."
+  (let ((delta (unboxed--db-files-delta-create))
+	ls file files)
+    (when (or files-remove files-add)
+      (setq ls files-remove
+	    files (unboxed--db-files-delta-remove delta))
+      (while ls
+	(setq file (pop ls))
+	(unboxed--add-installed-file-to-db-files files file))
+      (setq ls files-add
+	    files (unboxed--db-files-delta-install delta))
+      (while ls
+	(setq pkg (pop ls))
+	(unboxed--add-file-to-db-files files file)))
+    delta))
+
+(defun unboxed--make-db-files-transaction (db &optional files-remove files-add on-completion)
+  "Make a files-only transaction for database DB.
+Arguments:
+  `DB' - database subject to transaction
+  `FILES-REMOVE' - list of package descriptors to remove from available set
+  `FILES-ADD' - list of package descriptor to install into available set
+  `ON-COMPLETION' - continuation to invoke after removals and installations
+                    are completed"
+  (let ((txn (unboxed--packages-transaction-create
+	      :db db
+	      :on-completion on-completion
+	      :initial (unboxed--copy-db-files
+			(unboxed--sexpr-db-active db))
+	      :todo (unboxed--make-db-files-delta files-remove files-add))))
+    txn))
+    
+
 (cl-defstruct (unboxed--packages-transaction
 	       (:constructor unboxed--packages-transaction-create)
 	       (:copier unboxed--packages-transaction-copy))
@@ -232,8 +297,7 @@ Arguments:
   (let ((txn (unboxed--packages-transaction-create
 	      :db db
 	      :on-completion on-completion
-	      :initial (unboxed--copy-db-packages
-			(unboxed--sexpr-db-available db))
+	      :initial (unboxed--sexpr-db-available db)
 	      :todo (unboxed--make-db-packages-delta pkgs-remove pkgs-add))))
     txn))
     
@@ -836,16 +900,18 @@ Arguments:
 	    files))
     pd-files))
 
-(defun unboxed--make-package-desc (pd &optional mgr)
+(defun unboxed--make-package-desc (db pd &optional mgr)
   "Initialize unboxed package descriptor from package-desc PD.
 Arguments:
+  DB - database containing this package descriptor 
   PD - unboxed package description
-  MGR - package installation manager, `package' or `unboxed'"
+  MGR - package installation manager, currently `package' or `unboxed'"
   (unless mgr
     (setq mgr 'package))
   (let ((version (unboxed--get-package-desc-version pd))
 	s n)
     (setq s (unboxed-package-desc-create
+	     :db db
 	     :manager mgr
 	     :single (unboxed-package-single-p pd)
 	     :simple (unboxed-package-simple-p pd)
@@ -1036,7 +1102,7 @@ Arguments:
     (when (and q (not (queue-empty q)))
       (queue-first q))))
   
-(defun unboxed--make-boxed-db-state (packages)
+(defun unboxed--make-boxed-db-state (db packages)
   "Initialize a db state for list of package descriptors PACKAGES."
   (let ((state (unboxed--db-state-create))
 	(ls packages)
@@ -1045,7 +1111,7 @@ Arguments:
       (setq pd (pop ls))
       (unboxed--add-package-to-db-state
        state
-       (unboxed--make-package-desc pd)))
+       (unboxed--make-package-desc db pd)))
     state))
 
 (defun unboxed--copy-source-db-files (files)
