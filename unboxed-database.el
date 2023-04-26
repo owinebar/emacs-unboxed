@@ -368,7 +368,7 @@ Arguments:
 	  p pd)
       (while ls
 	(setq p (pop ls))
-	(setq pd (unboxed--get-package-from-state-by-name available p))
+	(setq pd (unboxed--get-package-from-db-packages-by-name available p))
 	(when pd
 	  (unboxed--add-package-to-db-state active pd))))
     db))

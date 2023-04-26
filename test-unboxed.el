@@ -1,5 +1,5 @@
 
-(setq load-path (cons default-directory load-path))
+(setq load-path (add-to-list 'load-path default-directory))
 (load "unboxed")
 (custom-set-variables `(unboxed-user-area-pred ,#'unboxed-package-any-p))
 (custom-set-variables `(unboxed-site-area-pred ,#'unboxed-package-any-p))
