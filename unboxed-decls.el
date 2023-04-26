@@ -881,6 +881,9 @@ Arguments:
 	(pd-files (unboxed-package-desc-files pd))
 	(pkg-dir (file-name-as-directory (unboxed-package-desc-dir pd)))
 	area cats ls cat-pred noncat-files N)
+    (unless pd-files
+      (setq pd-files (unboxed--db-files-create))
+      (setf (unboxed-package-desc-files pd) pd-files))
     (setq area (unboxed--sexpr-db-area db)
 	  cats (unboxed--area-categories area)
 	  ls cats

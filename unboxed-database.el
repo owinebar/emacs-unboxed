@@ -167,6 +167,8 @@ Arguments:
 	cats ls install-files cat-name cq)
     (setq cats (unboxed--area-categories area)
 	  ls cats)
+    (unless pkg-cat-files
+      (setq pkg-cat-files (unboxed--catalog-package-files pd)))
     (while ls
       (setq cat (cdr (pop ls))
 	    cat-name (unboxed-file-category-name cat)
