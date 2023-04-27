@@ -933,8 +933,8 @@ installation manager.
 	cat-name pr)
     (setq cat-name cat ;(unboxed-file-category-name cat)
 	  pr (assq cat-name (queue-all aq)))
-    (unless pr
-      (display-warning :error (format "Category not found %S" cat-name)))
+    ;; (unless pr
+    ;;   (display-warning :error (format "Category not found %S" cat-name)))
     ;; (unless pr
     ;;   (signal 'unboxed-invalid-category `(,inst ,als)))
     (unless pr
