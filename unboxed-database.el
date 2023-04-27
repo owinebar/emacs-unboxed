@@ -25,10 +25,18 @@
 
 ;;; Code:
 
+(require 'autoload)
 (require 'async-job-queue)
 (require 'unboxed-decls)
 (require 'unboxed-categories)
 (require 'unboxed-file-management)
+
+
+(defvar unboxed-temp-directory)
+(defvar unboxed--package-job-queue-freq 1.0
+  "Polling frequency for job queues created during unbox operations.")
+
+(defvar unboxed--catalog-package-chunks 50)
 
 (defun unboxed--package-in-boxes (pd boxes)
   "Test whether package PD is on the paths in BOXES."
@@ -119,25 +127,6 @@ Arguments:
 		  scoped-areas))
     (nreverse als)))
 
-(defun unboxed--excluded-package-regex (ls)
-  "Construct regular expression to match the package names on LS."
-  (let (re-ls syms re e)
-    (while ls
-      (setq e (pop ls))
-      (cond
-       ((symbolp e)
-	(push (symbol-name e) syms))
-       (t (push e re-ls))))
-    (when syms
-      (setq e (concat "\\(" (regexp-opt syms) "\\)")))
-    (unless (and syms (null re-ls))
-      (setq re (pop re-ls))
-      (setq e (concat "\\(" re "\\)")))
-    (while re-ls
-      (setq re (pop re-ls))
-      (setq e (concat "\\(" re "\\)\\|" e)))
-    e))
-
 (defun unboxed--apply-package-pred (pred excluded-re pd)
   "Apply PRED to PD if its name does not match EXCLUDED-RE."
   (let (rv)
@@ -149,7 +138,8 @@ Arguments:
 (defun unboxed--packages-to-unbox (db)
   "List packages from boxed area of DB matching its predicate."
   (let ((area (unboxed--sexpr-db-area db))
-	(pkgs (unboxed--sexpr-db-packages db))
+	;; fixme - this needs to be a hash table
+	(pkgs (unboxed--sexpr-db-available db))
 	unboxed-pkgs pred excluded-re)
     (setq pred (unboxed--area-pred area)
 	  excluded-re (unboxed--area-excluded-regex area))
@@ -164,11 +154,11 @@ Arguments:
   (message "Unboxing %s" pd)
   (let ((area (unboxed--sexpr-db-area db))
 	(pkg-cat-files (unboxed--db-files-locations (unboxed-package-desc-files pd)))
-	cats ls install-files cat-name cq)
+	cat cats ls install-files cat-name cq)
     (setq cats (unboxed--area-categories area)
 	  ls cats)
     (unless pkg-cat-files
-      (setq pkg-cat-files (unboxed--catalog-package-files pd)))
+      (setq pkg-cat-files (unboxed--catalog-package-desc-files pd)))
     (while ls
       (setq cat (cdr (pop ls))
 	    cat-name (unboxed-file-category-name cat)
@@ -178,6 +168,221 @@ Arguments:
 	  (funcall install-files db pd (queue-all cq) ajq installed-files-k)
 	(when installed-files-k
 	  (funcall installed-files-k nil))))))
+
+(defvar unboxed--unboxed-library-paths
+  (mapcar #'locate-library
+	  '("queue"
+	    "async"
+	    "async-job-queue"
+	    "rewriting-pcase"
+	    "unboxed-decls"
+	    "unboxed-custom"
+	    "unboxed-categories"
+	    "unboxed-file-management"
+	    "unboxed-database"))
+  "List of paths to load in async jobs calling unboxed functions.")
+
+(defvar unboxed--unboxed-library-paths-loads
+  (mapcar (lambda (x) `(load ,x)) unboxed--unboxed-library-paths)
+  "Load statements to run at the start of async jobs calling unboxed")
+
+(defvar unboxed--async-pkg-catalog-time-out 600
+  "Maximum time allowed for cataloging package files in seconds")
+
+(defun unboxed--import-source-files (pd src-files)
+  "Import SRC-FILES record from async process into package descriptor PD"
+  (let ((pd-files (unboxed-package-desc-files pd))
+	(tbl (unboxed--db-files-files src-files))
+	(cats (unboxed--sexpr-db-categories
+	       (unboxed-package-desc-db pd))))
+    (maphash (lambda (_key src)
+	       (let* ((cname (unboxed-file-category-name
+			      (unboxed-source-file-db-category src)))
+		      (cat (assq cname cats))
+		      (fname (symbol-name (unboxed-source-file-file src))))
+		 (setq cat (and cat (cdr cat)))
+		 (unboxed--add-source-file-to-db-files
+		  pd-files
+		  (unboxed--make-source-file pd cat fname))))
+	     tbl)
+    pd))
+
+(defun unboxed--simple-schedule (ajq program job-id timeout finish-k)
+  "Schedule PROGRAM on job queue AJQ with standardized callbacks.
+Arguments:
+  AJQ - asynchronous job queue
+  PROGRAM - sexp of program to run asyncronously
+  JOB-ID - identifying symbol for job
+  TIMEOUT - timeout in seconds or nil if no timeout
+  FINISH-K  - continuation to call when async process returns"
+  (ajq-schedule-job ajq
+		    program
+		    job-id
+		    (lambda (_job)
+		      (message "Starting %s" job-id))
+		    (lambda (_job v)
+		      (message "Starting %s: Done" job-id)
+		      (funcall finish-k v))
+		    timeout
+		    (lambda (_job)
+		      (message "Starting %s: Timed out" job-id))
+		    (lambda (_job)
+		      (message "Starting %s: Cancelled" job-id))))
+
+(eval-and-compile
+  (defun unboxed--wrap-async-expr (rv prog &optional logfile warnfile msgfile)
+    "Wrap sexp PROG for safe running in batch mode, with return value in variable RV."
+    (let ((err-sym (cl-gensym "error-")))
+      `(progn
+	 (defvar ,rv nil)
+	 (setq print-circular t)
+	 (condition-case ,err-sym
+	     (progn
+	       (defun yes-or-no-p (prompt)
+		 (error "Interactive yes-or-no-p prompting not allowed in batch mode - %S" prompt))
+	       (defun y-or-n-p (prompt)
+		 (error "Interactive y-or-n-p prompting not allowed in batch mode - %S" prompt))
+	       (defun y-or-n-p-with-timeout (prompt seconds default)
+		 (error "Interactive y-or-n-p-with-timeout prompting not allowed in batch mode - %S %S %S"
+			prompt seconds default))
+	       ,prog)
+	   (error (display-warning :error (format "%S: %S" (car ,err-sym) (cdr ,err-sym)))))
+	 ,@(when logfile
+	     `((let ((log-buffer (get-buffer byte-compile-log-buffer)))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,logfile))))))
+	 ,@(when warnfile
+	     `((let ((log-buffer (get-buffer "*Warnings*")))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,warnfile))))))
+	 ,@(when msgfile
+	     `((let ((log-buffer (get-buffer "*Messages*")))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,msgfile))))))
+	 ,rv))))
+
+(defmacro unboxed--async-expr (rv prog &optional logfile warnfile msgfile)
+  "Avoide quoting RV when using `unboxed--wrap-async-expr' on PROG."
+  `(unboxed--wrap-async-expr ',rv ,prog ,logfile ,warnfile ,msgfile))
+
+
+(defun unboxed--check-logfile (logfile)
+  "Check if LOGFILE exists and return contents if so, destroying LOGFILE."
+  (let (log-text)
+    (when (file-exists-p logfile)
+      (with-temp-buffer
+	(insert-file-contents logfile)
+	(setq log-text (buffer-string)))
+      (delete-file logfile))
+    log-text))
+    
+(defun unboxed--async-catalog-packages (db pds id ajq k)
+  "Catalog package files in an async job.
+Arguments:
+  `DB' Database
+  `PDS' List of package descriptors to catalog
+  `AJQ' job queue
+  `K' Continuation to invoke with the cataloged files"
+  (let ((pkgs
+	 (mapcar (lambda (pd)
+		   `(,(unboxed-package-desc-id pd)
+		     .
+		     ,(unboxed-package-desc-dir pd)))
+		 pds))
+	(cats (unboxed--sexpr-db-categories db))
+	cat-preds job-id finish-k logfile-base
+	logfile warnfile msgfile program)
+    (setq logfile-base id
+	  logfile (unboxed--make-install-logfile "compile-log" nil logfile-base)
+	  warnfile (unboxed--make-install-logfile "warnings" nil logfile-base)
+	  msgfile (unboxed--make-install-logfile "messages" nil logfile-base)
+	  job-id (intern (concat "catalog-files-" id))
+	  cat-preds (mapcar (lambda (pr)
+			      (cons (car pr)
+				    (unboxed-file-category-predicate (cdr pr))))
+			    cats)
+	  finish-k
+	  (lambda (result)
+	    (let (log-text warn-text msg-text)
+	      ;;(message "%S returned \n%s" job-id (pp result))
+	      (message "%S returned" job-id)
+	      (setq log-text (unboxed--check-logfile logfile))
+	      (setq warn-text (unboxed--check-logfile warnfile))
+	      (setq msg-text (unboxed--check-logfile msgfile))
+	      (when (> (length log-text) 0)
+		(message "Log-text\n===\n%s\n===\n" log-text))
+	      (when (> (length warn-text) 0)
+		(message "Warn-text\n===\n%s\n===\n" warn-text))
+	      (when (> (length msg-text) 0)
+		(message "Msg-text\n===\n%s\n===\n" msg-text))
+	      (unboxed--add-source-files-to-packages pds result cats)
+	      (when k
+		(funcall k pds))))
+	  program
+	  (unboxed--async-expr
+	   pd1
+	   `(progn 
+	      ,@unboxed--unboxed-library-paths-loads
+	      (setq pd1 (unboxed--catalog-packages ',pkgs ',cat-preds)))
+	   logfile
+	   warnfile
+	   msgfile))
+    ;; (message "Async program\n%s" (pp program))
+    (unboxed--simple-schedule ajq program job-id
+			      unboxed--async-pkg-catalog-time-out
+			      finish-k)))
+
+(defun unboxed--take (n ls)
+  (let ((q (make-queue)))
+    (while (and ls (> n 0))
+      (queue-enqueue q (pop ls))
+      (cl-decf n))
+    (cons (queue-all q) ls)))
+	
+(defun unboxed--catalog-packages-in-list (db &optional pkg-ls)
+  "Catalog active packages in DB of names in PKG-LS."
+  ;;(message "cataloging %S" pkg-ls)
+  (unless unboxed-temp-directory
+    (setq unboxed-temp-directory (file-name-concat user-emacs-directory
+						   "tmp")))
+  (setq unboxed-temp-directory
+	(file-name-as-directory unboxed-temp-directory))
+  (unless (file-accessible-directory-p unboxed-temp-directory)
+    (make-directory unboxed-temp-directory t))
+  (let ((pds (unboxed--get-db-active-package-descriptors db pkg-ls))
+	(idx 0)
+	ajq cataloged-pkg-k final-k ls txn head)
+    ;;(message "Cataloging \n%S" (queue-map #'unboxed--summarize-package-desc pds))
+    (setq txn (unboxed--make-transaction db nil (queue-all pds))
+	  cataloged-pkg-k (lambda (pds)
+			    (while pds
+			      (unboxed--apply-transaction-install-package
+			       txn
+			       (pop pds))))
+	  final-k (lambda (_ajq)
+		    (message "Finished cataloging"))
+	  ls (queue-all pds)
+	  ajq (async-job-queue-make-job-queue unboxed--package-job-queue-freq
+					      nil
+					      final-k
+					      nil
+					      nil
+					      nil
+					      'unbox--package-catalog-jobs))
+    (while ls
+      (setq head (unboxed--take unboxed--catalog-package-chunks ls)
+	    ls (cdr head)
+	    head (car head)
+	    idx (1+ idx))
+      (unboxed--async-catalog-packages db
+				       head
+				       (format "%s" idx)
+				       ajq
+				       cataloged-pkg-k))))
+
 
 (defun unboxed--unbox-packages-in-db (db)
   "Unbox all packages in DB that satisfy its predicate."
@@ -197,21 +402,19 @@ Arguments:
 	  (make-directory loc t))))))
 
 
-(defvar unboxed--package-job-queue-freq 1.0
-  "Polling frequency for job queues created during unbox operations.")
-
 (defun unboxed--get-db-active-package-descriptors (db &optional pkg-ls)
   "Get active package descriptors of DB for names in PKG-LS."
-  (let ((pkg-tbl (unboxed--db-packages-descs
-		  (unboxed--sexpr-db-active db)))
+  (let ((pkg-tbl (unboxed--db-packages-named
+		  (unboxed--db-state-packages
+		   (unboxed--sexpr-db-active db))))
 	(pkgs (make-queue)))
     (if pkg-ls
-	(maphash (lambda (key pd)
+	(maphash (lambda (key pdq)
 		   (when (memq key pkg-ls)
-		     (queue-enqueue pkgs pd)))
+		     (queue-enqueue pkgs (queue-first pdq))))
 		 pkg-tbl)
-      (maphash (lambda (_key pd)
-		 (queue-enqueue pkgs pd))
+      (maphash (lambda (_key pdq)
+		 (queue-enqueue pkgs (queue-first pdq)))
 	       pkg-tbl))
     pkgs))
 
@@ -226,19 +429,18 @@ Arguments:
   (unless (file-accessible-directory-p unboxed-temp-directory)
     (make-directory unboxed-temp-directory t))
   (let ((area (unboxed--sexpr-db-area db))
-	(pkgs (unboxed--sexpr-db-packages db))
+	(pkgs-to-unbox
+	 (queue-all (unboxed--get-db-active-package-descriptors db pkg-ls)))
 	ajq finalize-pkg-files-k
-	cats pkgs-to-unbox ls
+	cats ls
 	installed-file-k txn)
-    (maphash (lambda (key value)
-	       (when (memq key pkg-ls)
-		 (push value pkgs-to-unbox)))
-	     pkgs)
     (setq cats (unboxed--area-categories area))
     (unboxed--ensure-category-locations cats)
     (setq txn (unboxed--make-transaction db nil pkgs-to-unbox)
 	  installed-file-k (lambda (inst)
-			     (unboxed--enact-transaction-install-file txn inst))
+			     (unboxed--apply-transaction-install-file
+			      txn
+			      inst))
 	  finalize-pkg-files-k (lambda (ajq)
 				 (unboxed--finalize-unbox-package-list
 				  ajq db cats txn))
@@ -326,11 +528,12 @@ Arguments:
   "Create an unboxed db for AREA-NAME defined in alist AREAS."
   (let ((available (unboxed--db-packages-create))
 	(active (unboxed--db-state-create))
-	db area box-paths boxed-pkgs
+	db area box-paths boxed-pkgs active-pkgs test-pd
 	library-loc cats lib-cat al-fn)
     ;; Only record areas in scope
     ;; E.G. site package database should not contain references to user database file
     ;;     of site administrators
+    (setq active-pkgs (unboxed--db-state-packages active))
     (setq areas (unboxed--scoped-areas area-name areas))
     (setq area (cdar areas))
     (setq cats (unboxed--area-categories area))
@@ -366,13 +569,29 @@ Arguments:
 		     (unboxed--make-package-desc db pd)))
 		  (cdr pr)))
 	  boxed-pkgs)
+    (message "activated initial\n%S" (unboxed--summarize-db-packages active-pkgs))
     (let ((ls package-activated-list)
 	  p pd)
       (while ls
 	(setq p (pop ls))
-	(setq pd (unboxed--get-package-from-db-packages-by-name available p))
-	(when pd
-	  (unboxed--add-package-to-db-state active pd))))
+	(when (assq p boxed-pkgs)
+	  (setq test-pd (unboxed--get-package-from-db-packages-by-name active-pkgs p))
+	  (when test-pd
+	    (message "Package %S is already in active packages" p))
+	  (setq pd (unboxed--get-package-from-db-packages-by-name available p))
+	  (unless pd
+	    (message "Package %S is nil" p))
+	  (message "Package %S\n%S" p (unboxed--summarize-package-desc pd))
+	  (when pd
+	    (message "Package %S is being added" p)
+	    (unboxed--add-package-to-db-state active pd)
+	    ;; validate
+	    (setq test-pd (unboxed--get-package-from-db-packages-by-name active-pkgs p))
+	    (unless (eq test-pd pd)
+	      (message "Package %s did not get added - %S versus %S"
+		       p
+		       (unboxed--summarize-package-desc test-pd)
+		       (unboxed--summarize-package-desc pd)))))))
     db))
 
 (defun unboxed--make-dbs-from-settings (area-settings)

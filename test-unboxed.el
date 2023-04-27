@@ -4,10 +4,35 @@
 (custom-set-variables `(unboxed-user-area-pred ,#'unboxed-package-any-p))
 (custom-set-variables `(unboxed-site-area-pred ,#'unboxed-package-any-p))
 
+(require 'package)
+
+(package-load-all-descriptors)
+(when (null package-activated-list)
+  (package-initialize))
+(setq package-activated-list (delete-dups package-activated-list))
 
 (setq tmp (unboxed--make-dbs-from-settings unboxed-areas))
-
+q
 (setq tmp-user-db (cdr (assq 'user tmp)))
+(setq tmp-user-active (unboxed--sexpr-db-active tmp-user-db))
+(setq tmp-user-available-pkgs (unboxed--sexpr-db-available tmp-user-db))
+(setq tmp-user-active-pkgs (unboxed--db-state-packages tmp-user-active))
+(pp (unboxed--summarize-db-packages tmp-user-active-pkgs))
+(pp (unboxed--summarize-db-packages tmp-user-available-pkgs))
+
+(pp (unboxed--summarize-package-desc
+     (unboxed--get-package-from-db-packages-by-name active-pkgs
+						    p)
+
+ (pp (unboxed--summarize-sexpr-db tmp-user-db))
+ 
+(setq tmp-user-db2 (unboxed--catalog-packages-in-list tmp-user-db '(ztree async)))
+(setq tmp-user-db2 (unboxed--catalog-packages-in-list tmp-user-db))
+
+(setq tmp-pds (unboxed--get-db-active-package-descriptors tmp-user-db '(ztree)))
+(setq tmp-pds (unboxed--get-db-active-package-descriptors tmp-user-db '(ac-c-headers)))
+
+(pp (queue-all (queue-map #'unboxed--summarize-package-desc tmp-pds)))
 
 (setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(async)))
 (setq tmp2 (unboxed--unbox-package-list-in-db tmp-user-db '(yasnippet yasnippet-classic-snippets)))
@@ -29,6 +54,7 @@
 (unboxed--ensure-autoloads-file (expand-file-name "~/.emacs.d/lisp/unboxed-autoloads.el"))
 (make-directory-autoloads "~/.emacs.d/lisp" "~/.emacs.d/lisp/unboxed-autoloads.el")
 
+(pp tmp-user-db (current-buffer))
 (pp tmp2 (current-buffer))
 
 (let ((default-directory (file-name-concat user-emacs-directory "lisp/")))

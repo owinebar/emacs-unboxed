@@ -33,12 +33,11 @@
 
 ;;; libraries to install in the package lisp directory
 (defun unboxed-library-p (path)
-  "Test whether PATH is an elisp library contained in a package that should be \
-installed in the unboxed library directory.  This predicate only \
-recognizes files matching `*.el' in top directory of the package \
-archive, and excludes `*-pkg.el' and `*-autoloads.el' files, since the \
-former are not proper elisp and the latter are not useful in an \
-unboxed installation."
+  "Test whether PATH is an elisp library source file on the `load-path'.
+This predicate only recognizes files matching `*.el' in top directory
+of the package archive, and excludes `*-pkg.el' and `*-autoloads.el'
+files, since the former are not proper elisp and the latter are not
+useful in an unboxed installation."
   (let ((ext (file-name-extension path))
 	(base (file-name-sans-extension (file-name-nondirectory path)))
 	(dir (file-name-directory path)))
@@ -50,42 +49,38 @@ unboxed installation."
 	 (not (string-suffix-p "-autoloads" base)))))
 
 (defun unboxed-data-library-p (path)
-  "Test if PATH is an elisp library contained in a package data directory \
-that should be compiled there."
+  "Test if PATH is an elisp library source file not on the load path.
+These will be installed in the unboxed data directory for the package and
+compiled there."
   (let ((ext (file-name-extension path))
-	(base (file-name-sans-extension (file-name-nondirectory path)))
-	(dir (file-name-directory path)))
+	(base (file-name-sans-extension (file-name-nondirectory path))))
     (and ext (string= ext "el")
 	 (not (string-suffix-p "-pkg" base))
 	 (not (string-suffix-p "-autoloads" base)))))
 
 ;;; modules to install in the package lisp directory
 (defun unboxed-module-p (path)
-  "Test if PATH is an elisp modules contained in a package that should be \
-installed in the unboxed library directory."
-  (let ((ext (file-name-extension path))
-	(base (file-name-nondirectory path))
-	(dir (file-name-directory path)))
+  "Test if PATH is an elisp module (dynamic library).
+Modules will be installed in the unboxed library directory."
+  (let ((ext (file-name-extension path)))
     (and ext (string= ext "so"))))
 
 ;;; theme files
 (defun unboxed-theme-p (path)
-  "Test if PATH is an elisp library contained in a package that should be \
-installed in the unboxed theme directory.  Any `*-theme.el' file whose \
-feature name is not contained in `unboxed-theme-libraries' variable is \
-classified as a theme."
+  "Test if PATH is a theme file to be installed in the unboxed theme directory.
+Any `*-theme.el' file whose feature name is not contained in
+`unboxed-theme-libraries' variable is classified as a theme."
   (let ((ext (file-name-extension path))
-	(base (file-name-sans-extension (file-name-nondirectory path)))
-	(dir (file-name-directory path)))
+	(base (file-name-sans-extension (file-name-nondirectory path))))
     (and ext (string= ext "el")
 	 (string-suffix-p "-theme" base)
 	 (not (memq (intern base) unboxed-theme-libraries)))))
 
 ;;; info files
 (defun unboxed-info-p (path)
-  "Test if PATH is a file contained in a package that should be installed \
-in the unboxed info directory.  This predicate recognizes all `*.info' \
-and 'dir' files as info files"
+  "Test if PATH is an info file.
+This predicate recognizes all `*.info' and 'dir' files as info files.
+The `.info' files will be installed in the unboxed info directory."
   (let ((ext (file-name-extension path)))
     (or (and ext (string= ext "info"))
 	(string= (file-name-nondirectory path) "dir"))))
@@ -109,11 +104,10 @@ and 'dir' files as info files"
     (and ext (string= ext "eln"))))
 
 ;;; Anything else
-(defun unboxed-data-p (path)
-  "Test if PATH is a file contained in a package that should be installed \
-in the unboxed data directory for the package, \
-`<unboxed-data-directory>/<package-name>'.  This predicate is expected \
-to be executed last and capture all files not explicitly ignored."
+(defun unboxed-data-p (_path)
+  "Test if _PATH should be copied to unboxed package's data directory.
+This predicate is expected to be executed last and capture all files
+not explicitly ignored."
   t)
 
 (defun unboxed--function-or-nil (val)

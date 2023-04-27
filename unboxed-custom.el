@@ -44,7 +44,7 @@
 
 (defcustom unboxed-user-db-path
   (file-name-concat user-emacs-directory "unboxed-packages.sexpr")
-  "Directory in which the database tracking installed user packages \
+  "Directory in which the database tracking installed user packages 
 will be stored."
   :type 'directory
   :group 'unboxed-user)
@@ -54,7 +54,7 @@ will be stored."
   :group 'unboxed-user)
 (defcustom unboxed-site-db-path
   (file-name-concat data-directory "unboxed-site-packages.sexpr")
-  "Directory in which the database tracking installed system packages \
+  "Directory in which the database tracking installed system packages 
 will be stored."
   :type 'directory
   :group 'unboxed-site)
@@ -65,8 +65,8 @@ will be stored."
 
 (defcustom unboxed-temp-directory
   (file-name-concat user-emacs-directory "tmp")
-  "Directory for temporary files created during unboxed package \
-operations.  An example would be the compilation logs for an \
+  "Directory for temporary files created during unboxed package 
+operations.  An example would be the compilation logs for an 
 asynchronously byte-compiled library."
   :type 'directory
   :group 'unboxed)
@@ -78,37 +78,37 @@ asynchronously byte-compiled library."
   :group 'unboxed-user)
 (defcustom unboxed-user-library-directory
   (file-name-concat user-emacs-directory "lisp")
-  "Directory in which unboxed elisp libraries from user packages will \
+  "Directory in which unboxed elisp libraries from user packages will 
 be installed.  Will be added to the `load-path'."
   :type 'directory
   :group 'unboxed-user)
 (defcustom unboxed-user-byte-compiled-directory
   (file-name-concat user-emacs-directory "lisp")
-  "Directory in which unboxed byte-compiled elisp libraries from \
+  "Directory in which unboxed byte-compiled elisp libraries from 
 user packages will be installed.  Will be added to the `load-path'."
   :type 'directory
   :group 'unboxed-user)
 (defcustom unboxed-user-native-compiled-directory
   (file-name-concat user-emacs-directory "eln-cache")
-  "Directory in which unboxed native-compiled elisp libraries from \
+  "Directory in which unboxed native-compiled elisp libraries from 
 user packages will be installed.  Will be added to the `load-path'."
   :type 'directory
   :group 'unboxed-user)
 (defcustom unboxed-user-theme-directory
   (file-name-concat user-emacs-directory "themes")
-  "Directory in which unboxed theme files from \
+  "Directory in which unboxed theme files from 
 user packages will be installed."
   :type 'directory
   :group 'unboxed-user)
 (defcustom unboxed-user-info-directory
   (file-name-concat user-emacs-directory "info")
-  "Directory in which unboxed info files from \
+  "Directory in which unboxed info files from 
 user packages will be installed."
   :type 'directory
   :group 'unboxed-user)
 (defcustom unboxed-user-data-directory
   (file-name-concat user-emacs-directory "data")
-  "The directory in which package data directories for \
+  "The directory in which package data directories for 
 unboxed user packages will be installed."
   :type 'directory
   :group 'unboxed-user)
@@ -125,54 +125,54 @@ unboxed user packages will be installed."
 	       (format "%s.%s" emacs-major-version emacs-minor-version))
       (expand-file-name (file-name-concat unboxed-site-directory ".."))
     unboxed-site-directory)
-  "The parent of the system directory if it is version-specific, or \
+  "The parent of the system directory if it is version-specific, or 
 the system directory otherwise"
   :type 'directory
   :group 'unboxed-site)
 
 (defcustom unboxed-site-archive-directory
   (file-name-concat unboxed-site-directory "site-elpa")
-  "The directory in which unpacked archives for system packages are \
+  "The directory in which unpacked archives for system packages are 
 found"
   :type 'directory
   :group 'unboxed-site)
 
 (defcustom unboxed-site-library-directory
   (file-name-concat unboxed-site-directory "site-lisp" "packages")
-  "The directory in which unboxed elisp libraries for system packages \
+  "The directory in which unboxed elisp libraries for system packages 
 will be installed"
   :type 'directory
   :group 'unboxed-site)
 (defcustom unboxed-site--byte-compiled-directory
   (file-name-concat unboxed-site-directory "site-lisp" "packages")
-  "Directory in which unboxed byte-compiled elisp libraries from \
+  "Directory in which unboxed byte-compiled elisp libraries from 
 site packages will be installed.  Will be added to the `load-path'."
   :type 'directory
   :group 'unboxed-site)
 (defcustom unboxed-user-native-compiled-directory
   (file-name-concat unboxed-site-directory "eln-cache" "packages")
-  "Directory in which unboxed native-compiled elisp libraries from \
+  "Directory in which unboxed native-compiled elisp libraries from 
 site packages will be installed.  Will be added to the `load-path'."
   :type 'directory
   :group 'unboxed-site)
 
 (defcustom unboxed-site-theme-directory
   (file-name-concat user-emacs-directory "site-themes")
-  "The directory in which unboxed theme files for system packages will \
+  "The directory in which unboxed theme files for system packages will 
 be installed"
   :type 'directory
   :group 'unboxed-site)
 
 (defcustom unboxed-site-info-directory
   (file-name-concat user-emacs-directory "site-info")
-  "The directory in which unboxed info files for system packages will \
+  "The directory in which unboxed info files for system packages will 
 be installed"
   :type 'directory
   :group 'unboxed-site)
 
 (defcustom unboxed-site-data-directory
   (file-name-concat user-emacs-directory "site-data")
-  "The directory in which package data directories for unboxed user \
+  "The directory in which package data directories for unboxed user 
 packages will be installed."
   :type 'directory
   :group 'unboxed-site)
@@ -260,30 +260,30 @@ packages will be installed."
 	  unboxed-site-package-patches
 	  unboxed-site-autoloads-filename
 	  ,unboxed--default-site-categories))
-  "Areas for unboxing packages corresponding to source of the boxed \
+  "Areas for unboxing packages corresponding to source of the boxed 
 packages.  Typically there are two areas for unboxing- site and user."
   :type `(repeat :tag "Area Configuration" ,unboxed--area-customization-type)
   :group 'unboxed)
 
 (defcustom unboxed-user-theme-libraries nil
-  "List of elisp libraries for themes that are named `*-theme' but are \
-not themes themselves.  These are required to be on the `load-path' \
+  "List of elisp libraries for themes that are named `*-theme' but are 
+not themes themselves.  These are required to be on the `load-path' 
 rather than in a theme directory."
   :type '(repeat symbol)
   :group 'unboxed-user)
 
 (defcustom unboxed-site-theme-libraries nil
-  "List of elisp libraries for themes that are named `*-theme' but are \
-not themes themselves.  These are required to be on the `load-path' \
+  "List of elisp libraries for themes that are named `*-theme' but are 
+not themes themselves.  These are required to be on the `load-path' 
 rather than in a theme directory."
   :type '(repeat symbol)
   :group 'unboxed-site)
 
 (defcustom unboxed-user-excluded-packages nil
-  "List of user packages that should never be managed by unbox regardless \
-of the result of the predicate.  Useful for packages that fail when \
-unboxed for some reason, or for packages which the user wishes to \
-maintain in traditional form, e.g. for active development of a \
+  "List of user packages that should never be managed by unbox regardless 
+of the result of the predicate.  Useful for packages that fail when 
+unboxed for some reason, or for packages which the user wishes to 
+maintain in traditional form, e.g. for active development of a 
 package directory that is a git repo."
   :type '(repeat
 	  (choice (symbol :tag "Package Name")
@@ -291,10 +291,10 @@ package directory that is a git repo."
   :group 'unboxed-user)
 
 (defcustom unboxed-site-excluded-packages nil
-  "List of site packages that should never be managed by unbox regardless \
-of the result of the predicate.  Useful for packages that fail when \
-unboxed for some reason, or for packages which the user wishes to \
-maintain in traditional form, e.g. for active development of a \
+  "List of site packages that should never be managed by unbox regardless 
+of the result of the predicate.  Useful for packages that fail when 
+unboxed for some reason, or for packages which the user wishes to 
+maintain in traditional form, e.g. for active development of a 
 package directory that is a git repo."
   :type '(repeat
 	  (choice (symbol :tag "Package Name")
@@ -303,8 +303,8 @@ package directory that is a git repo."
 
 
 (defcustom unboxed-user-package-patches nil
-  "Association list of packages mapped to a patch file making any \
-updates required to the package to make it compatible with unboxed \
+  "Association list of packages mapped to a patch file making any 
+updates required to the package to make it compatible with unboxed
 installation."
   :type '(repeat (list (symbol :tag "package")
 		       (file :tag "patch file")
@@ -313,8 +313,8 @@ installation."
   :group 'unboxed-user)
 
 (defcustom unboxed-site-package-patches nil
-  "Association list of packages mapped to a patch file making any \
-updates required to the package to make it compatible with unboxed \
+  "Association list of packages mapped to a patch file making any 
+updates required to the package to make it compatible with unboxed 
 installation."
   :type '(repeat (list (symbol :tag "package")
 		       (file :tag "patch file")
@@ -323,13 +323,13 @@ installation."
   :group 'unboxed-site)
 
 (defcustom unboxed-user-autoloads-filename "unboxed-user-autoloads.el"
-  "Name of generated autoloads file in library directory for unboxed \
+  "Name of generated autoloads file in library directory for unboxed 
 user packages."
   :type 'string
   :group 'unboxed-user)
 
 (defcustom unboxed-site-autoloads-filename "unboxed-site-autoloads.el"
-  "Name of generated autoloads file in library directory for unboxed \
+  "Name of generated autoloads file in library directory for unboxed 
 site packages."
   :type 'string
   :group 'unboxed-site)
@@ -408,13 +408,12 @@ site packages."
     `(file-name-directory (or . ,(and (pred listp)
 				      ls
 				      (guard (memq 'load-file-name ls))))))
-  "A list of pcase patterns that match against known expressions used to \
-compute a packages installation directory at either compile or load time.  \
-Any matches will be hard-coded to be the value of the unboxed package's \
+  "A list of pcase patterns that match against known expressions used to 
+compute a packages installation directory at either compile or load time.
+Any matches will be hard-coded to be the value of the unboxed package's 
 data directory as a string."
   :type '(repeat (sexpr :tag "pcase pattern"))
   :group 'unboxed-user
-  :set #'unboxed--set-pcase-replace-sexpr-p
   )
 
 (defcustom unboxed-site-data-directory-patterns
@@ -423,13 +422,12 @@ data directory as a string."
     `(file-name-directory (or . ,(and (pred listp)
 				      ls
 				      (guard (memq 'load-file-name ls))))))
-  "A list of pcase patterns that match against known expressions used to \
-compute a packages installation directory at either compile or load time.  \
-Any matches will be hard-coded to be the value of the unboxed package's \
+  "A list of pcase patterns that match against known expressions used to 
+compute a packages installation directory at either compile or load time. 
+Any matches will be hard-coded to be the value of the unboxed package's
 data directory as a string."
   :type '(repeat (sexpr :tag "pcase pattern"))
   :group 'unboxed-site
-  :set #'unboxed--set-pcase-replace-sexpr-p
   )
 
 

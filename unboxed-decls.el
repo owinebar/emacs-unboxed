@@ -26,6 +26,8 @@
 ;;; Code:
 
 (require 'package)
+(require 'queue)
+(require 'async-job-queue)
 
 (defvar unboxed--buffer-name "*Unboxed*"
   "Name of unboxed logging buffer.")
@@ -33,6 +35,13 @@
 (defvar unboxed--buffer (get-buffer-create unboxed--buffer-name)
   "The unboxed logging buffer.")
 
+(defun queue-map (f q)
+  "Map function F over queue Q, returning a queue."
+  (let ((q1 (make-queue))
+	(ls (queue-all q)))
+    (while ls
+      (queue-enqueue q1 (funcall f (pop ls))))
+    q1))
 
 (defun queue-remq (q elt)
   "Remove all occurence of ELT from queue Q."
@@ -124,6 +133,27 @@ or site packages
   system-load-path
   categories)
 
+(defun unboxed--summarize-area (area)
+  "Summarize unboxing area AREA."
+  (when area
+    `(area
+      (name ,(unboxed--area-name area))
+      (boxes ,(unboxed--area-boxes area))
+      (db-path ,(unboxed--area-db-path area))
+      (pred ,(and (unboxed--area-pred area) t))
+      (excluded ,(unboxed--area-excluded area))
+      (excluded-regex ,(unboxed--area-excluded-regex area))
+      (theme-libraries ,(unboxed--area-theme-libraries area))
+      (datadir-pats ,(unboxed--area-datadir-pats area))
+      (patches ,(unboxed--area-patches area))
+      (autoloads-file ,(unboxed--area-autoloads-file area))
+      (system-load-path ,(unboxed--area-system-load-path area))
+      (categories
+       ,(mapcar (lambda (pr)
+		     `(,(car pr)
+		       ,(unboxed--summarize-file-category (cdr pr))))
+		   (unboxed--area-categories area))))))
+
 (defun unboxed--area-category-location (area catname)
   "Return the location for category CATNAME in AREA."
   (let ((cats (unboxed--area-categories area))
@@ -143,6 +173,47 @@ or site packages
   (files (make-hash-table))
   (locations (make-queue)))
 
+(defun unboxed--summarize-source-file-cat-queue (cq)
+  "Summarize category queue CQ with source-file entries"
+  (when cq
+    `(source-file-category-queue
+      ,(mapcar (lambda (pr)
+		 (let ((cat (car pr))
+		       (q (cdr pr)))
+		   `(,cat (queue ,(mapcar #'unboxed--summarize-source-file (queue-all q))))))
+	       (queue-all cq)))))
+
+(defun unboxed--summarize-source-db-files (srcs)
+  "Summarize db-files collection of source files SRCS."
+  (when srcs
+    `(db-files
+      (files ,(let ((r (make-queue)))
+		(maphash (lambda (id q)
+			   (queue-enqueue r `(,id (queue ,(mapcar #'unboxed--summarize-source-file (queue-all q))))))
+			 (unboxed--db-files-files srcs))
+		(queue-all r)))
+      (locations
+       ,(unboxed--summarize-source-file-cat-queue (unboxed--db-files-locations srcs))))))
+  
+(defun unboxed--summarize-installed-db-files (insts)
+  "Summarize db-files collection of installed files INSTS."
+  (when insts
+    `(db-files
+      (files ,(let ((r (make-queue)))
+		(maphash (lambda (id q)
+			   (queue-enqueue r `(,id (queue ,(mapcar #'unboxed--summarize-installed-file (queue-all q))))))
+			 (unboxed--db-files-files insts))
+		(queue-all r)))
+      (locations
+       (queue
+	,(let ((r (make-queue)))
+	   (mapc (lambda (pr)
+		   (let ((cat (car pr))
+			 (q (cdr pr)))
+		     (queue-enqueue r `(,cat (queue ,(mapcar #'unboxed--summarize-installed-file (queue-all q)))))))
+		 (unboxed--db-files-locations insts))
+	   (queue-all r)))))))
+
 (cl-defstruct (unboxed--db-packages
 	       (:constructor unboxed--db-packages-create)
 	       (:copier unboxed--db-packages-copy))
@@ -153,6 +224,22 @@ or site packages
   (descs (make-hash-table))
   (named (make-hash-table)))
 
+(defun unboxed--summarize-db-packages (pkgs)
+  "Summarize db-packages collection  PKGS."
+  (when pkgs
+    `(db-packages
+      (descs ,(let ((r (make-queue)))
+		(maphash (lambda (id q)
+			   (queue-enqueue r `(,id ,(queue-length q) (queue ,(mapcar #'unboxed--summarize-package-desc (queue-all q))))))
+			 (unboxed--db-packages-descs pkgs))
+		(queue-all r)))
+      (named ,(let ((r (make-queue)))
+		(maphash (lambda (id q)
+			   (queue-enqueue r `(,id ,(queue-length q) (queue ,(mapcar #'unboxed--summarize-package-desc (queue-all q))))))
+			 (unboxed--db-packages-named pkgs))
+		(queue-all r))))))
+
+
 (cl-defstruct (unboxed--db-state
 	       (:constructor unboxed--db-state-create)
 	       (:copier unboxed--db-state-copy))
@@ -162,6 +249,14 @@ or site packages
   `files' - unboxed--db-files collection"
   (packages (unboxed--db-packages-create))
   (files (unboxed--db-files-create)))
+
+(defun unboxed--summarize-db-state (state)
+  "Summarize db-state  STATE."
+  (when state
+    `(db-state
+      (packages ,(unboxed--summarize-db-packages (unboxed--db-state-packages state)))
+      (files ,(unboxed--summarize-installed-db-files (unboxed--db-state-files state))))))
+
 
 ;;; this delta is for changes against activated packages
 (cl-defstruct (unboxed--db-delta
@@ -174,6 +269,14 @@ or site packages
   (remove (unboxed--db-state-create))
   (install (unboxed--db-state-create)))
 
+(defun unboxed--summarize-db-delta (delta)
+  "Summarize db-delta  DELTA."
+  (when delta
+    `(db-delta
+      (remove ,(unboxed--summarize-db-state (unboxed--db-delta-remove delta)))
+      (install ,(unboxed--summarize-db-state (unboxed--db-delta-install delta))))))
+
+
 ;;; this delta is for changes in available packages
 (cl-defstruct (unboxed--db-packages-delta
 	       (:constructor unboxed--db-packages-delta-create)
@@ -184,6 +287,13 @@ or site packages
   `install' the db-packages requiring installation"
   (remove (unboxed--db-packages-create))
   (install (unboxed--db-packages-create)))
+
+(defun unboxed--summarize-db-packages-delta (delta)
+  "Summarize db-packages-delta  DELTA."
+  (when delta
+    `(db-packages-delta
+      (remove ,(unboxed--summarize-db-packages (unboxed--db-packages-delta-remove delta)))
+      (install ,(unboxed--summarize-db-packages (unboxed--db-packages-delta-install delta))))))
 
 ;;; this delta is for changes in installed files not involving changes in packages
 ;;; e.g. byte-compiling libraries or updating the dir info file
@@ -197,6 +307,20 @@ or site packages
   (remove (unboxed--db-files-create))
   (install (unboxed--db-files-create)))
 
+(defun unboxed--summarize-source-db-files-delta (delta)
+  "Summarize source db-files-delta  DELTA."
+  (when delta
+    `(db-files-delta
+      (remove ,(unboxed--summarize-source-db-files (unboxed--db-files-delta-remove delta)))
+      (install ,(unboxed--summarize-source-db-files (unboxed--db-files-delta-install delta))))))
+
+
+(defun unboxed--summarize-installed-db-files-delta (delta)
+  "Summarize installed db-files-delta  DELTA."
+  (when delta
+    `(db-files-delta
+      (remove ,(unboxed--summarize-installed-db-files (unboxed--db-files-delta-remove delta)))
+      (install ,(unboxed--summarize-installed-db-files (unboxed--db-files-delta-install delta))))))
 
 (cl-defstruct (unboxed--db-files-transaction
 	       (:constructor unboxed--db-files-transaction-create)
@@ -215,6 +339,28 @@ or site packages
   (done (unboxed--db-files-delta-create))
   (final (unboxed--db-files-create))
   on-completion)
+
+(defun unboxed--summarize-db-source-files-transaction (txn)
+  "Summarize source db-files-transaction TXN."
+  (when txn
+    `(db-files-transaction
+      (db ,(unboxed--area-name (unboxed--sexpr-db-area (unboxed--db-files-transaction-db txn))))
+      (initial ,(unboxed--summarize-source-db-files (unboxed--db-files-transaction-initial txn)))
+      (todo ,(unboxed--summarize-source-db-files-delta (unboxed--db-files-transaction-todo txn)))
+      (done ,(unboxed--summarize-source-db-files-delta (unboxed--db-files-transaction-done txn)))
+      (final ,(unboxed--summarize-source-db-files (unboxed--db-files-transaction-final txn)))
+      (on-completion ,(and (unboxed--db-files-transaction-on-completion txn) t)))))
+
+(defun unboxed--summarize-db-installed-files-transaction (txn)
+  "Summarize source db-files-transaction TXN."
+  (when txn
+    `(db-files-transaction
+      (db ,(unboxed--area-name (unboxed--sexpr-db-area (unboxed--db-files-transaction-db txn))))
+      (initial ,(unboxed--summarize-installed-db-files (unboxed--db-files-transaction-initial txn)))
+      (todo ,(unboxed--summarize-installed-db-files-delta (unboxed--db-files-transaction-todo txn)))
+      (done ,(unboxed--summarize-installed-db-files-delta (unboxed--db-files-transaction-done txn)))
+      (final ,(unboxed--summarize-installed-db-files (unboxed--db-files-transaction-final txn)))
+      (on-completion ,(and (unboxed--db-files-transaction-on-completion txn) t)))))
 
 (defun unboxed--make-db-files-delta (files-remove files-add)
   "Make a db-files-delta removing FILES-REMOVE and installing FILES-ADD."
@@ -267,6 +413,17 @@ Arguments:
   (done (unboxed--db-packages-delta-create))
   (final (unboxed--db-packages-create))
   on-completion)
+
+(defun unboxed--summarize-db-packages-transaction (txn)
+  "Summarize db-packages-transaction TXN."
+  (when txn
+    `(db-packages-transaction
+      (db ,(unboxed--area-name (unboxed--sexpr-db-area (unboxed--packages-transaction-db txn))))
+      (initial ,(unboxed--summarize-db-packages (unboxed--packages-transaction-initial txn)))
+      (todo ,(unboxed--summarize-db-packages-delta (unboxed--packages-transaction-todo txn)))
+      (done ,(unboxed--summarize-db-packages-delta (unboxed--packages-transaction-done txn)))
+      (final ,(unboxed--summarize-db-packages (unboxed--packages-transaction-final txn)))
+      (on-completion ,(and (unboxed--packages-transaction-on-completion txn) t)))))
 
 (defun unboxed--make-db-packages-delta (pkgs-remove pkgs-add)
   "Make a db-packages-delta removing PKGS-REMOVE and installing PKGS-ADD."
@@ -321,6 +478,17 @@ Arguments:
   (final (unboxed--db-state-create))
   on-completion)
 
+(defun unboxed--summarize-db-transaction (txn)
+  "Summarize db-transaction TXN."
+  (when txn
+    `(db-transaction
+      (db ,(unboxed--area-name (unboxed--sexpr-db-area (unboxed--transaction-db txn))))
+      (initial ,(unboxed--summarize-db-state (unboxed--transaction-initial txn)))
+      (todo ,(unboxed--summarize-db-delta (unboxed--transaction-todo txn)))
+      (done ,(unboxed--summarize-db-delta (unboxed--transaction-done txn)))
+      (final ,(unboxed--summarize-db-state (unboxed--transaction-final txn)))
+      (on-completion ,(and (unboxed--transaction-on-completion txn) t)))))
+
 (defun unboxed--make-db-delta (pkgs-remove pkgs-add)
   "Make a transaction-delta removing PKGS-REMOVE and installing PKGS-ADD."
   (let ((delta (unboxed--db-delta-create))
@@ -371,12 +539,12 @@ available for loading.
    `layouts' Association list of data structure layouts used in this db
    `areas' Association list of area structs in scope for dependency calculations
    `area' area struct for this database
-   `available' db state for all boxed packages of area on disk
+   `available' db packages for all boxed packages of area on disk
    `active' db state for all boxed packages of area available for package loading"
   layouts
   areas
   area
-  (available (unboxed--db-state-create))
+  (available (unboxed--db-packages-create))
   (active (unboxed--db-state-create)))
 
 (defun unboxed--sexpr-db-name (db)
@@ -394,6 +562,21 @@ available for loading.
   (unboxed--area-db-path
    (unboxed--sexpr-db-area db)))
 
+(defun unboxed--summarize-sexpr-db (db)
+  "Summarize database DB."
+  (when db
+    `(sexpr-db
+      (layouts ,(and (unboxed--sexpr-db-layouts db) t))
+      (areas ,(mapcar #'car (unboxed--sexpr-db-areas db)))
+      (area ,(unboxed--summarize-area (unboxed--sexpr-db-area db)))
+      (available ,(let ((q (make-queue)))
+		    (maphash (lambda (id pq) (queue-enqueue q `(,id ,(queue-length pq))))
+			     (unboxed--db-packages-descs (unboxed--sexpr-db-available db)))
+		    (queue-all q)))
+      (active ,(unboxed--summarize-db-state
+		(unboxed--sexpr-db-active db))))))
+
+  
 ;; (defun unboxed--sexpr-db-datadir-patterns (db)
 ;;   "Return the  of DB"
 ;;   (unboxed--area-datadir-pats
@@ -449,6 +632,21 @@ Other than predicate, the function slots may be nil.
   remove-files
   finalize-remove-files)
 
+(defun unboxed--summarize-file-category (cat)
+  "Construct non-recursive summary of category CAT."
+  `(file-category
+    (name ,(unboxed-file-category-name cat))
+    (area ,(if (symbolp (unboxed-file-category-area cat))
+	       `',(unboxed-file-category-area cat)
+	     (unboxed--area-name (unboxed-file-category-area cat))))
+    (path-variable ,(unboxed-file-category-path-variable cat))
+    (predicate ,(and (unboxed-file-category-predicate cat) t))
+    (location ,(unboxed-file-category-location cat))
+    (install-files ,(and (unboxed-file-category-install-files cat) t))
+    (finalize-install-files ,(and (unboxed-file-category-finalize-install-files cat) t))
+    (remove-files ,(and (unboxed-file-category-remove-files cat) t))
+    (finalize-remove-files ,(and (unboxed-file-category-finalize-remove-files cat) t))))
+     
 (cl-defstruct (unboxed-source-file
                (:constructor unboxed-source-file-create)
 	       (:copier unboxed-source-file-struct-copy))
@@ -462,6 +660,14 @@ Other than predicate, the function slots may be nil.
   package-desc
   db-category
   file)
+
+(defun unboxed--summarize-source-file (src)
+  "Summarize source file SRC."
+  `(source-file
+    (id ,(unboxed-source-file-id src))
+    (pkg ,(unboxed-package-desc-name (unboxed-source-file-package-desc src)))
+    (cat ,(unboxed-file-category-name (unboxed-source-file-db-category src)))
+    (file ,(unboxed-source-file-file src))))
 
 (cl-defstruct (unboxed-installed-file
                (:constructor unboxed-installed-file-create)
@@ -490,6 +696,17 @@ for reference.
   warnings
   messages)
 
+(defun unboxed--summarize-installed-file (inst)
+  "Summarize installed file INST."
+  `(installed-file
+    (source ,(unboxed-source-file-id (unboxed-installed-file-source inst)))
+    (id ,(unboxed-installed-file-id inst))
+    (file ,(unboxed-installed-file-file inst))
+    (created ,(unboxed-installed-file-created inst))
+    (log ,(and (unboxed-installed-file-log inst) t))
+    (warnings ,(and (unboxed-installed-file-warnings inst) t))
+    (messages ,(and (unboxed-installed-file-messages inst) t))))
+
 (cl-defstruct (unboxed--struct-layout
                (:constructor unboxed--struct-layout-create)
 	       (:copier unboxed--struct-layout-copy))
@@ -511,7 +728,7 @@ from a file.
 	       (:copier unboxed-package-desc-copy)
 	       (:include package-desc))
   "Package desc structure extended with fields recording its
-installation manager
+installation manager.
   Slots:
   `db' unboxed database that owns this package-desc
   `id' symbol that is unique for package name + version string
@@ -528,6 +745,18 @@ installation manager
   (manager 'package)
   files)
 
+(defun unboxed--summarize-package-desc (pd)
+  "Summarize unboxed package descriptor PD."
+  (when pd
+    `(unboxed-package-desc
+      (db ,(unboxed--area-name (unboxed-package-desc-area pd)))
+      (id ,(unboxed-package-desc-id pd))
+      (single ,(unboxed-package-desc-single pd))
+      (simple ,(unboxed-package-desc-simple pd))
+      (version-string ,(unboxed-package-desc-version-string pd))
+      (manager ,(unboxed-package-desc-manager pd))
+      (files ,(unboxed--summarize-source-db-files (unboxed-package-desc-files pd))))))
+  
 (defun unboxed-package-desc-area (pd)
   "Area of package descriptor PD."
   (unboxed--sexpr-db-area
@@ -698,15 +927,20 @@ installation manager
 
 (defun unboxed--add-source-file-to-cat-queue (aq src)
   "Add src-file SRC to aqueue AQ."
+  ;; (message "Adding \n%s\n to \n%s"
+  ;; 	   (pp (unboxed--summarize-
   (let ((cat (unboxed-source-file-category src))
-	pr)
-    (setq pr (assq cat (queue-all aq)))
+	cat-name pr)
+    (setq cat-name cat ;(unboxed-file-category-name cat)
+	  pr (assq cat-name (queue-all aq)))
+    (unless pr
+      (display-warning :error (format "Category not found %S" cat-name)))
     ;; (unless pr
     ;;   (signal 'unboxed-invalid-category `(,inst ,als)))
     (unless pr
-      (setq pr (cons cat (make-queue)))
+      (setq pr (cons cat-name (make-queue)))
       (queue-enqueue aq pr))
-    (queue-enqueue (cdr pr) inst))
+    (queue-enqueue (cdr pr) src))
   aq)
 
 ;; for use in a package-specific set of source files
@@ -805,12 +1039,20 @@ installation manager
 
 (defun unboxed--add-source-file-to-db-files (files src)
   "Add SRC to FILES."
-  (unboxed--add-source-file-to-cat-queue
-   (unboxed--db-files-locations files)
-   src)
-  (unboxed--add-source-file
-   (unboxed--db-files-files files)
-   src))
+  (let ((ls (unboxed--db-files-locations files))
+	(fs (unboxed--db-files-files files)))
+    ;; (message "Adding \n%s\n to locations\n%s"
+    ;; 	     (pp (unboxed--summarize-source-file src))
+    ;; 	     (pp (unboxed--summarize-source-file-cat-queue ls)))
+    (unboxed--add-source-file-to-cat-queue
+     ls
+     src)
+    ;; (message "Added \n%s\n to locations\n%s"
+    ;; 	     (pp (unboxed--summarize-source-file src))
+    ;; 	     (pp (unboxed--summarize-source-file-cat-queue ls)))
+    (unboxed--add-source-file
+     fs
+     src)))
 
 (defun unboxed--add-package-name (packages pd)
   "Add package descriptor PD to hash table PACKAGES by its name."
@@ -874,13 +1116,68 @@ Arguments:
     inst))
 
 
-(defun unboxed--catalog-package-files (pd)
+(defun unboxed--add-source-file-to-package-desc (pd cat fn)
+  "Add source file FN in category CAT to package desc PD."
+  ;; (message "Adding %S to \n%s\n in \n%s"
+  ;; 	   fn
+  ;; 	   (pp (unboxed--summarize-package-desc pd))
+  ;; 	   (pp (unboxed--summarize-file-category cat)))
+  (let ((db-files (unboxed-package-desc-files pd)))
+    (when (null db-files)
+      (setq db-files (unboxed--db-files-create))
+      (setf (unboxed-package-desc-files pd) db-files))
+    (unboxed--add-source-file-to-db-files
+     db-files
+     (unboxed--make-source-file pd cat fn))))
+
+(defun unboxed--add-source-files-to-package-desc (pd als cats)
+  "Add category alist ALS of paths to package desc PD and categories CATS."
+    (let ((db-files (unboxed-package-desc-files pd))
+	  pr c ls cat)
+      (when (not (null db-files))
+	;; discard any existing files
+	(message "Replacing existing source files for %s"
+		 (unboxed-package-desc-id pd))
+	(setq db-files (unboxed--db-files-create))
+	(setf (unboxed-package-desc-files pd) db-files))
+    (while als
+      (setq pr (pop als)
+	    c (car pr)
+	    ls (cdr pr)
+	    cat (assq c cats))
+      ;; (message "Adding \n%S\n to \n%s"
+      ;; 	       (pp als)
+      ;; 	       (pp (unboxed--summarize-package-desc pd)))
+      (unless cat
+	(display-warning 'error (format "Category name %s not recognized, ignoring %S" c ls)))
+      (when cat
+	(setq cat (cdr cat))
+	(mapc (lambda (path) (unboxed--add-source-file-to-package-desc pd cat path)) ls)))
+    pd))
+
+(defun unboxed--add-source-files-to-packages (pds pkg-alss cats)
+  "Add source files from PKG-ALSS to package descriptors PDS.
+Classified by categories CATS."
+  (let (pd id als)
+    (while pds
+      (setq pd (pop pds)
+	    id (unboxed-package-desc-id pd)
+	    als (assq id pkg-alss))
+      ;; (message "Adding %S\n%s" id (pp als))
+      (if (null als)
+	  (display-warning :error (format "Missing results for %S" id))
+	(setq als (cdr als))
+	(unboxed--add-source-files-to-package-desc pd als cats)))))
+    
+
+  
+(defun unboxed--catalog-package-desc-files (pd)
   "Construct source files for package PD."
-  (message "Cataloging files for %s" pd)
+  ;; (message "Cataloging files for %s" (unboxed--summarize-package-desc pd))
   (let ((db (unboxed-package-desc-db pd))
 	(pd-files (unboxed-package-desc-files pd))
 	(pkg-dir (file-name-as-directory (unboxed-package-desc-dir pd)))
-	area cats ls cat-pred noncat-files N)
+	area cats cat ls cat-pred files  noncat-files N)
     (unless pd-files
       (setq pd-files (unboxed--db-files-create))
       (setf (unboxed-package-desc-files pd) pd-files))
@@ -900,8 +1197,48 @@ Arguments:
 		   pd-files
 		   (unboxed--make-source-file pd cat fn))
 		(queue-enqueue noncat-files fn)))
-	    files))
+	    files)
+      (setq files (queue-all noncat-files)))
     pd-files))
+
+(defun unboxed--catalog-packages (pkgs cat-preds)
+  "Classify files of packages PKGS according to CAT-PREDS.
+PKGS is an alist mapping package symbols to their boxed directory."
+  (message "Catalog-packages\n%s" (pp pkgs))
+  (let ((q (make-queue))
+	pr pkg pkg-dir)
+    (while pkgs
+      (setq pr (pop pkgs)
+	    pkg (car pr)
+	    pkg-dir (cdr pr))
+      (queue-enqueue q `(,pkg . ,(unboxed--catalog-package-files pkg pkg-dir cat-preds))))
+    ;; (message "Found %S" q)
+    (queue-all q)))
+
+(defun unboxed--catalog-package-files (_pkg pkg-dir cat-preds)
+  "Classify package PKG files in PKG-DIR according to CAT-PREDS."
+  ;; (message "Cataloging files for %s in %s" pkg pkg-dir)
+  (setq pkg-dir (file-name-as-directory pkg-dir))
+  (let ((cq (make-queue))
+	pr cat ls cat-pred files cat-files noncat-files N)
+    (setq ls cat-preds
+	  N (length pkg-dir)
+	  files (mapcar (lambda (fn) (substring fn N))
+			(directory-files-recursively pkg-dir "")))
+    (while ls
+      (setq pr (pop ls)
+	    cat (car pr)
+	    cat-pred (cdr pr)
+	    noncat-files (make-queue)
+	    cat-files (make-queue))
+      (mapc (lambda (fn)
+	      (if (funcall cat-pred fn)
+		  (queue-enqueue cat-files fn)
+		(queue-enqueue noncat-files fn)))
+	    files)
+      (queue-enqueue cq `(,cat . ,(queue-all cat-files)))
+      (setq files (queue-all noncat-files)))
+    (queue-all cq)))
 
 (defun unboxed--make-package-desc (db pd &optional mgr)
   "Initialize unboxed package descriptor from package-desc PD.
@@ -1111,7 +1448,13 @@ Arguments:
 		     (unboxed--db-state-packages state)))))
     (when (and q (not (queue-empty q)))
       (queue-first q))))
-  
+
+(defun unboxed--get-cat-from-db-by-name (db catname)
+  "Return file-category asociated with CATNAME in database DB."
+  (let* ((cats (unboxed--sexpr-db-categories db))
+	 (pr (assq catname cats)))
+    (and pr (cdr pr))))
+
 (defun unboxed--make-boxed-db-state (db packages)
   "Initialize a db state for list of package descriptors PACKAGES."
   (let ((state (unboxed--db-state-create))
@@ -1139,7 +1482,7 @@ Arguments:
   (let ((new-files (unboxed--db-files-create)))
     (maphash (lambda (_key aq)
 	       (mapc (lambda (inst)
-		       (unboxed--add-installed-file-to-files new-files inst))
+		       (unboxed--add-installed-file-to-db-files new-files inst))
 		     (queue-all aq)))
 	     (unboxed--db-files-files files))
     new-files))
@@ -1198,7 +1541,7 @@ Arguments:
 	 (choice :tag "Data Directory patterns" symbol nil)
 	 (choice :tag "Patches" symbol nil)
 	 (choice :tag "Autoloads Filename" symbol string nil)
-	 ,unboxed--sexpr-db-customization-type)
+	 ,unboxed--file-category-customization-type)
   "Customization type for database area.")
 
 (defun unboxed--make-keyword (fld)
@@ -1269,6 +1612,25 @@ until a list of strings is produced."
 	(push (pop ls) r)))
     r))
 	
+
+(defun unboxed--excluded-package-regex (ls)
+  "Construct regular expression to match the package names on LS."
+  (let (re-ls syms re e)
+    (while ls
+      (setq e (pop ls))
+      (cond
+       ((symbolp e)
+	(push (symbol-name e) syms))
+       (t (push e re-ls))))
+    (when syms
+      (setq e (concat "\\(" (regexp-opt syms) "\\)")))
+    (unless (and syms (null re-ls))
+      (setq re (pop re-ls))
+      (setq e (concat "\\(" re "\\)")))
+    (while re-ls
+      (setq re (pop re-ls))
+      (setq e (concat "\\(" re "\\)\\|" e)))
+    e))
 
 (defun unboxed--make-area (name
 			   boxes-conf
