@@ -127,6 +127,37 @@ Arguments:
 		  scoped-areas))
     (nreverse als)))
 
+(defun unboxed--update-area-autoloads (area _src-loc _dst-loc files _k)
+  "Update autoloads file for AREA.
+Arguments:
+  AREA - Unboxing area"
+  (let ((autoloads-fn (unboxed--area-autoloads-file area))
+	(area-name (unboxed--area-name area))
+	(area-id (intern (format ":%s" (unboxed--area-name area))))
+	src inst
+	autoloads-file result comp-file new-installed)
+    (setq autoloads-file (expand-file-name (file-name-concat dst-loc autoloads-fn))
+	  comp-file (unboxed--byte-compiled-library-name autoloads-file)
+	  src (unboxed--Csource-file-create
+	       :id (intern (format "%s#%s" area-id (file-name-nondirectory autoloads-file)))
+	       :package area-id
+	       :file (intern (file-name-nondirectory autoloads-file)))
+	  inst (unboxed--Cinstalled-file-create
+		:src (unboxed--Csource-file-id src)
+		:package area-id
+		:id (intern (format "%s#%s" area-id (file-name-nondirectory comp-file)))
+		:file (intern (file-name-nondirectory comp-file))))
+    (let ((al-buffer (get-file-buffer autoloads-file)))
+      (when al-buffer
+	(with-current-buffer al-buffer
+	  (set-buffer-modified-p nil))
+	(kill-buffer al-buffer)))
+    (make-directory-autoloads dst-loc autoloads-file)
+    (let ((default-directory dst-loc))
+      (setq result (unboxed--async-byte-compile-file autoloads-file))
+      (when (and (stringp result) (> (length result) 0))
+	(message "Compile log for %S\n%s" autoloads-file result)))))
+  
 (defun unboxed--apply-package-pred (pred excluded-re pd)
   "Apply PRED to PD if its name does not match EXCLUDED-RE."
   (let (rv)
@@ -189,96 +220,6 @@ Arguments:
 (defvar unboxed--async-pkg-catalog-time-out 600
   "Maximum time allowed for cataloging package files in seconds")
 
-(defun unboxed--import-source-files (pd src-files)
-  "Import SRC-FILES record from async process into package descriptor PD"
-  (let ((pd-files (unboxed-package-desc-files pd))
-	(tbl (unboxed--db-files-files src-files))
-	(cats (unboxed--sexpr-db-categories
-	       (unboxed-package-desc-db pd))))
-    (maphash (lambda (_key src)
-	       (let* ((cname (unboxed-file-category-name
-			      (unboxed-source-file-db-category src)))
-		      (cat (assq cname cats))
-		      (fname (symbol-name (unboxed-source-file-file src))))
-		 (setq cat (and cat (cdr cat)))
-		 (unboxed--add-source-file-to-db-files
-		  pd-files
-		  (unboxed--make-source-file pd cat fname))))
-	     tbl)
-    pd))
-
-(defun unboxed--simple-schedule (ajq program job-id timeout finish-k)
-  "Schedule PROGRAM on job queue AJQ with standardized callbacks.
-Arguments:
-  AJQ - asynchronous job queue
-  PROGRAM - sexp of program to run asyncronously
-  JOB-ID - identifying symbol for job
-  TIMEOUT - timeout in seconds or nil if no timeout
-  FINISH-K  - continuation to call when async process returns"
-  (ajq-schedule-job ajq
-		    program
-		    job-id
-		    (lambda (_job)
-		      (message "Starting %s" job-id))
-		    (lambda (_job v)
-		      (message "Starting %s: Done" job-id)
-		      (funcall finish-k v))
-		    timeout
-		    (lambda (_job)
-		      (message "Starting %s: Timed out" job-id))
-		    (lambda (_job)
-		      (message "Starting %s: Cancelled" job-id))))
-
-(eval-and-compile
-  (defun unboxed--wrap-async-expr (rv prog &optional logfile warnfile msgfile)
-    "Wrap sexp PROG for safe running in batch mode, with return value in variable RV."
-    (let ((err-sym (cl-gensym "error-")))
-      `(progn
-	 (defvar ,rv nil)
-	 (setq print-circular t)
-	 (condition-case ,err-sym
-	     (progn
-	       (defun yes-or-no-p (prompt)
-		 (error "Interactive yes-or-no-p prompting not allowed in batch mode - %S" prompt))
-	       (defun y-or-n-p (prompt)
-		 (error "Interactive y-or-n-p prompting not allowed in batch mode - %S" prompt))
-	       (defun y-or-n-p-with-timeout (prompt seconds default)
-		 (error "Interactive y-or-n-p-with-timeout prompting not allowed in batch mode - %S %S %S"
-			prompt seconds default))
-	       ,prog)
-	   (error (display-warning :error (format "%S: %S" (car ,err-sym) (cdr ,err-sym)))))
-	 ,@(when logfile
-	     `((let ((log-buffer (get-buffer byte-compile-log-buffer)))
-		 (when log-buffer
-		   (with-current-buffer log-buffer
-		     (write-region nil nil ,logfile))))))
-	 ,@(when warnfile
-	     `((let ((log-buffer (get-buffer "*Warnings*")))
-		 (when log-buffer
-		   (with-current-buffer log-buffer
-		     (write-region nil nil ,warnfile))))))
-	 ,@(when msgfile
-	     `((let ((log-buffer (get-buffer "*Messages*")))
-		 (when log-buffer
-		   (with-current-buffer log-buffer
-		     (write-region nil nil ,msgfile))))))
-	 ,rv))))
-
-(defmacro unboxed--async-expr (rv prog &optional logfile warnfile msgfile)
-  "Avoide quoting RV when using `unboxed--wrap-async-expr' on PROG."
-  `(unboxed--wrap-async-expr ',rv ,prog ,logfile ,warnfile ,msgfile))
-
-
-(defun unboxed--check-logfile (logfile)
-  "Check if LOGFILE exists and return contents if so, destroying LOGFILE."
-  (let (log-text)
-    (when (file-exists-p logfile)
-      (with-temp-buffer
-	(insert-file-contents logfile)
-	(setq log-text (buffer-string)))
-      (delete-file logfile))
-    log-text))
-    
 (defun unboxed--async-catalog-packages (db pds id ajq k)
   "Catalog package files in an async job.
 Arguments:
@@ -335,6 +276,57 @@ Arguments:
 			      unboxed--async-pkg-catalog-time-out
 			      finish-k)))
 
+(defun unboxed--async-unbox-package (txn pd ajq k)
+  "Unbox package PD according to db transaction TXN.
+Arguments:
+  `TXN'  Database transaction
+  `PD' Specific package desc to unbox
+  `AJQ' job queue
+  `K' Continuation to invoke with the list of installed files"
+  (let ((db (unboxed--transaction-db txn))
+	cats
+	cat-preds job-id finish-k logfile-base
+	logfile warnfile msgfile program)
+    (setq cats (unboxed--sexpr-db-categories db)
+	  logfile-base id
+	  logfile (unboxed--make-install-logfile "compile-log" nil logfile-base)
+	  warnfile (unboxed--make-install-logfile "warnings" nil logfile-base)
+	  msgfile (unboxed--make-install-logfile "messages" nil logfile-base)
+	  job-id (intern (concat "catalog-files-" id))
+	  cat-preds (mapcar (lambda (pr)
+			      (cons (car pr)
+				    (unboxed-file-category-predicate (cdr pr))))
+			    cats)
+	  finish-k
+	  (lambda (result)
+	    (let (log-text warn-text msg-text)
+	      ;;(message "%S returned \n%s" job-id (pp result))
+	      (message "%S returned" job-id)
+	      (setq log-text (unboxed--check-logfile logfile))
+	      (setq warn-text (unboxed--check-logfile warnfile))
+	      (setq msg-text (unboxed--check-logfile msgfile))
+	      (when (> (length log-text) 0)
+		(message "Log-text\n===\n%s\n===\n" log-text))
+	      (when (> (length warn-text) 0)
+		(message "Warn-text\n===\n%s\n===\n" warn-text))
+	      (when (> (length msg-text) 0)
+		(message "Msg-text\n===\n%s\n===\n" msg-text))
+	      (unboxed--add-source-files-to-packages pds result cats)
+	      (when k
+		(funcall k pds))))
+	  program
+	  (unboxed--async-expr
+	   pd1
+	   `(progn 
+	      ,@unboxed--unboxed-library-paths-loads
+	      (setq pd1 (unboxed--catalog-packages ',pkgs ',cat-preds)))
+	   logfile
+	   warnfile
+	   msgfile))
+    ;; (message "Async program\n%s" (pp program))
+    (unboxed--simple-schedule ajq program job-id
+			      unboxed--async-pkg-catalog-time-out
+			      finish-k)))
 (defun unboxed--take (n ls)
   (let ((q (make-queue)))
     (while (and ls (> n 0))
@@ -365,13 +357,9 @@ Arguments:
 	  final-k (lambda (_ajq)
 		    (message "Finished cataloging"))
 	  ls (queue-all pds)
-	  ajq (async-job-queue-make-job-queue unboxed--package-job-queue-freq
-					      nil
-					      final-k
-					      nil
-					      nil
-					      nil
-					      'unbox--package-catalog-jobs))
+	  ajq (unboxed--simple-ajq unboxed--package-job-queue-freq
+				   final-k
+				   'unbox--package-catalog-jobs))
     (while ls
       (setq head (unboxed--take unboxed--catalog-package-chunks ls)
 	    ls (cdr head)
@@ -444,13 +432,9 @@ Arguments:
 	  finalize-pkg-files-k (lambda (ajq)
 				 (unboxed--finalize-unbox-package-list
 				  ajq db cats txn))
-	  ajq (ajq-make-job-queue unboxed--package-job-queue-freq
-				  nil
-				  finalize-pkg-files-k
-				  nil
-				  nil
-				  nil
-				  'unbox-install-jobs)
+	  ajq (unboxed--simple-ajq unboxed--package-job-queue-freq
+				   finalize-pkg-files-k
+				   'unbox-install-jobs)
 	  ls pkgs-to-unbox)
     (while ls
       (unboxed--unbox-package db (pop ls) installed-file-k ajq))))

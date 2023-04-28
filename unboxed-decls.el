@@ -133,6 +133,8 @@ or site packages
   system-load-path
   categories)
 
+
+
 (defun unboxed--summarize-area (area)
   "Summarize unboxing area AREA."
   (when area
@@ -154,14 +156,6 @@ or site packages
 		       ,(unboxed--summarize-file-category (cdr pr))))
 		   (unboxed--area-categories area))))))
 
-(defun unboxed--area-category-location (area catname)
-  "Return the location for category CATNAME in AREA."
-  (let ((cats (unboxed--area-categories area))
-	result)
-    (setq result (assq catname cats)
-	  result (and result
-		      (unboxed-file-category-location (cdr result))))
-    result))
 
 (cl-defstruct (unboxed--db-files
 	       (:constructor unboxed--db-files-create)
@@ -596,6 +590,15 @@ available for loading.
 		      (unboxed-file-category-location (cdr result))))
     result))
 
+(defun unboxed--area-category-location (area catname)
+  "Return the location category CATNAME of AREA."
+  (let ((cats (unboxed--area-categories area))
+	result)
+    (setq result (assq catname cats)
+	  result (and result
+		      (unboxed-file-category-location (cdr result))))
+    result))
+
 (cl-defstruct (unboxed-file-category
                (:constructor unboxed-file-category-create)
 	       (:copier unboxed-file-category-copy))
@@ -632,6 +635,7 @@ Other than predicate, the function slots may be nil.
   remove-files
   finalize-remove-files)
 
+
 (defun unboxed--summarize-file-category (cat)
   "Construct non-recursive summary of category CAT."
   `(file-category
@@ -661,6 +665,21 @@ Other than predicate, the function slots may be nil.
   db-category
   file)
 
+
+(cl-defstruct (unboxed--Csource-file
+               (:constructor unboxed--Csource-file-create)
+	       (:copier unboxed--Csource-file-struct-copy))
+  "Concrete source-file structure for async operations.
+  Slots:
+  `id' symbol used as unique key for package + file
+  `package' package id (versioned)
+  `category' name of unboxed-file-category to which the file belongs
+  `file' location of file relative to package box directory"
+  id
+  package
+  category
+  file)
+
 (defun unboxed--summarize-source-file (src)
   "Summarize source file SRC."
   `(source-file
@@ -683,6 +702,8 @@ for reference.
          may not be identical to source file, or even have the same
          base name, e.g. byte-compiled files
          Stored as symbol
+  `package-desc' unboxed-package-desc of package file derives from
+  `db-category' unboxed-file-category to which the file belongs
   `created' boolean indicated whether installing this file succeeded
   `log' Any relevant data generated during the installation process
         for this specific file
@@ -691,6 +712,35 @@ for reference.
   source
   id
   file
+  db-category
+  created
+  log
+  warnings
+  messages)
+
+(cl-defstruct (unboxed--Cinstalled-file
+               (:constructor unboxed--Cinstalled-file-create)
+	       (:copier unboxed--Cinstalled-file-struct-copy))
+  "Concrete form of installed-file for async operations.
+  Slots:
+  `source' id of concrete source file
+  'package' id of concrete package-desc
+  `id' symbol used as unique key for category + file
+  `file' location of file relative to category-location
+         may not be identical to source file, or even have the same
+         base name, e.g. byte-compiled files
+         Stored as symbol
+  `category' category name of file
+  `created' boolean indicated whether installing this file succeeded
+  `log' Any relevant data generated during the installation process
+        for this specific file
+  `warnings' *Warnings* buffer during install process
+  `messages' *Messages* buffer during install process"
+  source
+  package
+  id
+  file
+  category
   created
   log
   warnings
@@ -699,13 +749,26 @@ for reference.
 (defun unboxed--summarize-installed-file (inst)
   "Summarize installed file INST."
   `(installed-file
-    (source ,(unboxed-source-file-id (unboxed-installed-file-source inst)))
+    (source
+     ,(unboxed--file-id (unboxed-installed-file-source inst)))
     (id ,(unboxed-installed-file-id inst))
     (file ,(unboxed-installed-file-file inst))
     (created ,(unboxed-installed-file-created inst))
     (log ,(and (unboxed-installed-file-log inst) t))
     (warnings ,(and (unboxed-installed-file-warnings inst) t))
     (messages ,(and (unboxed-installed-file-messages inst) t))))
+
+(defun unboxed--concretize-installed-file (inst)
+  "Summarize installed file INST."
+  (unboxed--Cinstalled-file-create
+   :source (unboxed--file-id (unboxed-installed-file-source inst))
+   :package (unboxed-package-desc-id (unboxed-installed-file-package inst))
+   :id (unboxed-installed-file-id inst)
+   :file (unboxed-installed-file-file inst)
+   :created (unboxed-installed-file-created inst)
+   :log (unboxed-installed-file-log inst)
+   :warnings (unboxed-installed-file-warnings inst)
+   :messages (unboxed-installed-file-messages inst)))
 
 (cl-defstruct (unboxed--struct-layout
                (:constructor unboxed--struct-layout-create)
@@ -739,6 +802,30 @@ installation manager.
   `files' unboxed--db-files collection of source files in the package box"
   db
   id
+  single
+  simple
+  (version-string "0")
+  (manager 'package)
+  files)
+
+(cl-defstruct (unboxed-Cpackage-desc
+               (:constructor unboxed-Cpackage-desc-create)
+	       (:copier unboxed-Cpackage-desc-copy))
+  "Concrete form of unboxed-package-desc.
+  Slots:
+  `name' package name
+  `id' symbol that is unique for package name + version string
+  `area' area containing the package
+  `dir' path to boxed files
+  `single' boolean which is t if the package is for a single library file
+  `simple' boolean which is t if the package directory has no subdirectories
+  `version-string' version string for this package
+  `manager' name of installation manager for this package
+  `files' unboxed--db-files collection of source files in the package box"
+  name
+  id
+  area
+  dir
   single
   simple
   (version-string "0")
@@ -868,11 +955,6 @@ installation manager.
   (unboxed-package-desc-name
    (unboxed-installed-file-package-desc inst)))
    
-(defun unboxed-installed-file-db-category (inst)
-  "Get category containing installed file INST."
-  (unboxed-source-file-db-category
-   (unboxed-installed-file-source inst)))
-
 (defun unboxed-installed-file-category (inst)
   "Get name of category containing installed file INST."
   (unboxed-file-category-name
@@ -1103,14 +1185,158 @@ Arguments:
 	  (unboxed--make-source-file-id src))
     src))
 
-(defun unboxed--make-installed-file (src dst-file)
+(defun unboxed--file-file (inst-or-src)
+  "Get the file path associated with INST-OR-SRC."
+  (when inst-or-src
+    (cond
+     ((unboxed-source-file-p inst-or-src)
+      (unboxed-source-file-file inst-or-src))
+     ((unboxed-installed-file-p inst-or-src)
+      (unboxed-installed-file-file inst-or-src))
+     ((unboxed--Csource-file-p inst-or-src)
+      (unboxed--Csource-file-file inst-or-src))
+     ((unboxed--Cinstalled-file-p inst-or-src)
+      (unboxed--Cinstalled-file-file inst-or-src))
+     (t
+      (signal 'unboxed-invalid-file-record inst-or-src)))))
+
+(defun unboxed--file-package (inst-or-src)
+  "Get the package id associated with INST-OR-SRC."
+  (when inst-or-src
+    (cond
+     ((unboxed-source-file-p inst-or-src)
+      (unboxed-package-desc-id
+       (unboxed-source-file-package-desc inst-or-src)))
+     ((unboxed-installed-file-p inst-or-src)
+      (unboxed-package-desc-id
+       (unboxed-installed-file-package-desc inst-or-src)))
+     ((unboxed--Csource-file-p inst-or-src)
+      (unboxed--Csource-file-package inst-or-src))
+     ((unboxed--Cinstalled-file-p inst-or-src)
+      (unboxed--Cinstalled-file-package inst-or-src))
+     (t
+      (signal 'unboxed-invalid-file-record inst-or-src)))))
+
+(defun unboxed--file-cat (inst-or-src)
+  "Get the file-category name associated with INST-OR-SRC."
+  (when inst-or-src
+    (cond
+     ((unboxed-source-file-p inst-or-src)
+      (unboxed-source-file-category inst-or-src))
+     ((unboxed-installed-file-p inst-or-src)
+      (unboxed-installed-file-category inst-or-src))
+     ((unboxed--Csource-file-p inst-or-src)
+      (unboxed--Csource-file-category inst-or-src))
+     ((unboxed--Cinstalled-file-p inst-or-src)
+      (unboxed--Cinstalled-file-category inst-or-src))
+     (t
+      (signal 'unboxed-invalid-file-record inst-or-src)))))
+
+(defun unboxed--file-db-category (inst-or-src)
+  "Get the file-category structure associated with INST-OR-SRC."
+  (when inst-or-src
+    (cond
+     ((unboxed-source-file-p inst-or-src)
+      (unboxed-source-file-db-category inst-or-src))
+     ((unboxed-installed-file-p inst-or-src)
+      (unboxed-installed-file-db-category inst-or-src))
+     (t
+      (signal 'unboxed-invalid-file-record inst-or-src)))))
+
+(defun unboxed--file-id (inst-or-src)
+  "Get the identifier associated with INST-OR-SRC."
+  (when inst-or-src
+    (cond
+     ((unboxed-source-file-p inst-or-src)
+      (unboxed-source-file-id inst-or-src))
+     ((unboxed-installed-file-p inst-or-src)
+      (unboxed-installed-file-id inst-or-src))
+     ((unboxed--Csource-file-p inst-or-src)
+      (unboxed--Csource-file-id inst-or-src))
+     ((unboxed--Cinstalled-file-p inst-or-src)
+      (unboxed--Cinstalled-file-id inst-or-src))
+     (t
+      (signal 'unboxed-invalid-file-record inst-or-src)))))
+
+(defun unboxed--file-log (inst)
+  "Get the log text associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (unboxed-installed-file-log inst))
+     ((unboxed--Cinstalled-file-p inst)
+      (unboxed--Cinstalled-file-log inst))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
+(defun unboxed--file-warnings (inst)
+  "Get the warnings text associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (unboxed-installed-file-warnings inst))
+     ((unboxed--Cinstalled-file-p inst)
+      (unboxed--Cinstalled-file-warnings inst))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
+(defun unboxed--file-messages (inst)
+  "Get the messages text associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (unboxed-installed-file-messages inst))
+     ((unboxed--Cinstalled-file-p inst)
+      (unboxed--Cinstalled-file-messages inst))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
+(defun unboxed--set-file-log (inst val)
+  "Set the log text associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (setf (unboxed-installed-file-log inst) val))
+     ((unboxed--Cinstalled-file-p inst)
+      (setf (unboxed--Cinstalled-file-log inst) val))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
+(defun unboxed--set-file-warnings (inst val)
+  "Set the warning text associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (setf (unboxed-installed-file-warnings inst) val))
+     ((unboxed--Cinstalled-file-p inst)
+      (setf (unboxed--Cinstalled-file-warnings inst) val))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
+(defun unboxed--set-file-messages (inst val)
+  "Set the warning text associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (setf (unboxed-installed-file-messages inst) val))
+     ((unboxed--Cinstalled-file-p inst)
+      (setf (unboxed--Cinstalled-file-messages inst) val))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
+(defun unboxed--make-installed-file (src dst-file &optional cat)
   "Make installed-file structure.
 Arguments:
   SRC - source-file structure
-  DST-FILE - file relative to unboxing category location"
+  DST-FILE - file relative to unboxing category location
+  CAT - db file-category to which this belongs
+        Default is the category of SRC"
   (let ((inst
-	 (unboxed-installed-file-create :source src
-					:file dst-file)))
+	 (unboxed-installed-file-create
+	  :source src
+	  :file dst-file
+	  :db-category (or cat
+			   (unboxed--file-db-category src)))))
     (setf (unboxed-installed-file-id inst)
 	  (unboxed--make-installed-file-id inst))
     inst))
@@ -1323,6 +1549,7 @@ Arguments:
   (unboxed--add-package-to-db-packages
    (unboxed--db-packages-delta-remove delta)
    pd))
+
 (defun unboxed--add-package-to-db-packages-delta-install (delta pd)
   "Add package descriptor PD to DELTA install."
   (unboxed--add-package-to-db-packages
@@ -1334,6 +1561,7 @@ Arguments:
   (unboxed--remove-package-from-db-packages
    (unboxed--db-packages-delta-remove delta)
    pd))
+
 (defun unboxed--remove-package-from-db-packages-delta-install (delta pd)
   "Remove package descriptor PD from DELTA install."
   (unboxed--remove-package-from-db-packages
@@ -1346,6 +1574,7 @@ Arguments:
   (unboxed--add-package-to-db-state
    (unboxed--db-delta-remove delta)
    pd))
+
 (defun unboxed--add-package-to-db-delta-install (delta pd)
   "Add package descriptor PD to DELTA install."
   (unboxed--add-package-to-db-state
@@ -1357,6 +1586,7 @@ Arguments:
   (unboxed--remove-package-from-db-state
    (unboxed--db-delta-remove delta)
    pd))
+
 (defun unboxed--remove-package-from-db-delta-install (delta pd)
   "Remove package descriptor PD from DELTA install."
   (unboxed--remove-package-from-db-state
@@ -1368,6 +1598,7 @@ Arguments:
   (unboxed--add-installed-file-to-db-state
    (unboxed--db-delta-remove delta)
    inst))
+
 (defun unboxed--add-installed-file-to-db-delta-install (delta inst)
   "Add installed-file INST to DELTA install."
   (unboxed--add-installed-file-to-db-state
@@ -1379,6 +1610,7 @@ Arguments:
   (unboxed--remove-installed-file-from-db-state
    (unboxed--db-delta-remove delta)
    inst))
+
 (defun unboxed--remove-installed-file-from-db-delta-install (delta inst)
   "Remove installed-file INST from DELTA install."
   (unboxed--remove-installed-file-from-db-state
@@ -1678,12 +1910,117 @@ CATS"
 
 
 
+(define-error 'unboxed-invalid-file-record
+  "Unrecognized type of file record")
 (define-error 'unboxed-invalid-package
   "Unrecognized package name")
 (define-error 'unboxed-invalid-category
   "Unrecognized category name")
 (define-error 'unboxed-invalid-category-spec
   "One or more fields in a file category specification is invalid")
+(define-error 'unboxed-invalid-install-signature
+  "An install method must take 5 arguments")
+(define-error 'unboxed-invalid-remove-signature
+  "A remove method must take 5 arguments")
+(define-error 'unboxed-invalid-finalize-install-signature
+  "A finalize-install method must take 5 arguments")
+(define-error 'unboxed-invalid-finalize-remove-signature
+  "A finalize-remove method must take 5 arguments")
+
+(defun unboxed--import-source-files (pd src-files)
+  "Import SRC-FILES record from async process into package descriptor PD"
+  (let ((pd-files (unboxed-package-desc-files pd))
+	(tbl (unboxed--db-files-files src-files))
+	(cats (unboxed--sexpr-db-categories
+	       (unboxed-package-desc-db pd))))
+    (maphash (lambda (_key src)
+	       (let* ((cname (unboxed-file-category-name
+			      (unboxed-source-file-db-category src)))
+		      (cat (assq cname cats))
+		      (fname (symbol-name (unboxed-source-file-file src))))
+		 (setq cat (and cat (cdr cat)))
+		 (unboxed--add-source-file-to-db-files
+		  pd-files
+		  (unboxed--make-source-file pd cat fname))))
+	     tbl)
+    pd))
+
+(defun unboxed--simple-ajq (freq final-k id)
+  "Make a simple job queue from FREQ, FINAL-K, and ID."
+  (async-job-queue-make-job-queue freq nil final-k nil nil nil id))
+
+(defun unboxed--simple-schedule (ajq program job-id timeout finish-k)
+  "Schedule PROGRAM on job queue AJQ with standardized callbacks.
+Arguments:
+  AJQ - asynchronous job queue
+  PROGRAM - sexp of program to run asyncronously
+  JOB-ID - identifying symbol for job
+  TIMEOUT - timeout in seconds or nil if no timeout
+  FINISH-K  - continuation to call when async process returns"
+  (ajq-schedule-job ajq
+		    program
+		    job-id
+		    (lambda (_job)
+		      (message "Starting %s" job-id))
+		    (lambda (_job v)
+		      (message "Starting %s: Done" job-id)
+		      (funcall finish-k v))
+		    timeout
+		    (lambda (_job)
+		      (message "Starting %s: Timed out" job-id))
+		    (lambda (_job)
+		      (message "Starting %s: Cancelled" job-id))))
+
+(eval-and-compile
+  (defun unboxed--wrap-async-expr (rv prog &optional logfile warnfile msgfile)
+    "Wrap sexp PROG for safe running in batch mode, with return value in variable RV."
+    (let ((err-sym (cl-gensym "error-")))
+      `(progn
+	 (defvar ,rv nil)
+	 (setq print-circular t)
+	 (condition-case ,err-sym
+	     (progn
+	       (defun yes-or-no-p (prompt)
+		 (error "Interactive yes-or-no-p prompting not allowed in batch mode - %S" prompt))
+	       (defun y-or-n-p (prompt)
+		 (error "Interactive y-or-n-p prompting not allowed in batch mode - %S" prompt))
+	       (defun y-or-n-p-with-timeout (prompt seconds default)
+		 (error "Interactive y-or-n-p-with-timeout prompting not allowed in batch mode - %S %S %S"
+			prompt seconds default))
+	       ,prog)
+	   (error (display-warning :error (format "%S: %S" (car ,err-sym) (cdr ,err-sym)))))
+	 ,@(when logfile
+	     `((let ((log-buffer (get-buffer byte-compile-log-buffer)))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,logfile))))))
+	 ,@(when warnfile
+	     `((let ((log-buffer (get-buffer "*Warnings*")))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,warnfile))))))
+	 ,@(when msgfile
+	     `((let ((log-buffer (get-buffer "*Messages*")))
+		 (when log-buffer
+		   (with-current-buffer log-buffer
+		     (write-region nil nil ,msgfile))))))
+	 ,rv))))
+
+(defmacro unboxed--async-expr (rv prog &optional logfile warnfile msgfile)
+  "Avoide quoting RV when using `unboxed--wrap-async-expr' on PROG."
+  `(unboxed--wrap-async-expr ',rv ,prog ,logfile ,warnfile ,msgfile))
+
+
+(defun unboxed--check-logfile (logfile)
+  "Check if LOGFILE exists and return contents if so, destroying LOGFILE."
+  (let (log-text)
+    (when (file-exists-p logfile)
+      (with-temp-buffer
+	(insert-file-contents logfile)
+	(setq log-text (buffer-string)))
+      (delete-file logfile))
+    log-text))
+    
 
 
 (provide 'unboxed-decls)

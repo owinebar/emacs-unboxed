@@ -37,6 +37,10 @@
 (defvar unboxed--async-byte-compile-autoloads-time-out 600
   "Maximum time allowed for byte-compiling autoloads file in seconds.")
 
+(defun unboxed--byte-compiled-library-name (src)
+  (if (string= (file-name-extension src) "el")
+      (concat src "c")
+    (concat src ".elc")))
 
 (defun unboxed--file-grep (re file)
   "Test whether FILE matches regular expression RE."
@@ -44,17 +48,18 @@
     (insert-file-contents file)
     (string-match-p re (buffer-string))))
 
-(defun unboxed--contains-boxed-sexprs-p (_db pd _cat file)
-  "Test whether FILE matches a sexp referencing the package's location.
+(defun unboxed--contains-boxed-sexprs-p (loc file)
+  "Test whether FILE may require rewriting.
 Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  CAT - category name
-  FILE - file in package's boxed location"
-  (unboxed--file-grep "load-file-name"
-			  (expand-file-name
-			   file
-			   (unboxed-package-desc-dir pd))))
+  LOC - directory of package
+  FILE - file path relative to LOC"
+  (let ((fn (if (symbolp file)
+		(symbol-name file)
+	      file)))
+    (unboxed--file-grep
+     "load-file-name"
+     (expand-file-name fn loc))))
+
 
 
 
@@ -114,68 +119,71 @@ record the buffer position and the buffer text respectively."
 	 )
      ,@body))
       
-(defun unboxed--make-rewrite-boxed-sexprs (db pd _cat _file)
-  "Return a sexpr-pred for changing boxed sexprs to PD data directory.
+(defun unboxed--make-rewrite-boxed-sexprs (replacement-box)
+  "Return a sexpr-pred for changing boxed sexprs to REPLACMENT-BOX.
 Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  CAT - category name
-  FILE - file in package's boxed location"
-  (let ((data-directory-val
-	 (list
-	  (file-name-concat
-	   (unboxed--sexpr-db-category-location db 'data)
-	   (symbol-name (unboxed-package-desc-name pd))))))
-    (lambda (sexpr)
-      (pcase sexpr
-	(`(file-name-directory load-file-name) data-directory-val)
-	(`(file-name-directory (or load-file-name . ,_rest))
-	 data-directory-val)
-	(`(file-name-directory
-	   (or . ,(and (pred listp)
-		       ls
-		       (guard (memq 'load-file-name ls)))))
-	 data-directory-val)
-	(_ nil)))))
+  REPLACEMENT-BOX - the path to the new box for loading expressions
+                    relative to the package box"
+  (lambda (sexpr)
+    (pcase sexpr
+      (`(file-name-directory load-file-name) replacement-box)
+      (`(file-name-directory (or load-file-name . ,_rest))
+       replacement-box)
+      (`(file-name-directory
+	 (or . ,(and (pred listp)
+		     ls
+		     (guard (memq 'load-file-name ls)))))
+       replacement-box)
+      (_ nil))))
 
+(defun unboxed--install-info-file-in-dir (loc file)
+  "Install info file FILE in directory LOC.
+Creates entry for an unboxed package info file in the dir file 
+for unboxed packages"
+  (let ((full-path (file-name-concat loc file))
+	info-dir log-text)
+    (setq info-dir (file-name-directory full-path))
+    (with-temp-buffer
+      (call-process unboxed-install-info-program nil t nil
+		    (shell-quote-argument
+		     (concat "--info-dir=" info-dir))
+		    (shell-quote-argument file))
+      (setq log-text (buffer-string)))
+    log-text))
 
-(defun unboxed--install-info-file-in-dir (installed-file)
-  "Install info file from INSTALLED-FILE.
+(defun unboxed--remove-info-file-from-dir (loc file)
+  "Remove info file FILE in directory LOC.
+Removes entry for an unboxed package info file in the dir file 
+for unboxed packages"
+  (let ((full-path (file-name-concat loc file))
+	info-dir log-text)
+    (setq info-dir (file-name-directory full-path))
+    (with-temp-buffer
+      (call-process unboxed-install-info-program nil t nil
+		    (shell-quote-argument
+		     (format "--info-dir=%s" info-dir))
+		    "--remove"
+		    (shell-quote-argument file))
+      (setq log-text (buffer-string)))
+    log-text))
+
+(defun unboxed--install-installed-info-file-in-dir (installed-file)
+  "Install info file specified by INSTALLED-FILE.
 Creates entry for an unboxed package info file in the dir file 
 for unboxed packages"
   (let ((file (symbol-name (unboxed-installed-file-file installed-file)))
 	(loc (unboxed-installed-file-category-location
-	      installed-file))
-	full-path info-dir log-text)
-    (setq full-path (file-name-concat loc file))
-    (setq info-dir (file-name-directory full-path))
-    (with-temp-buffer
-      (call-process unboxed-install-info-program nil t nil
-		    (shell-quote-argument
-		     (concat "--info-dir=" info-dir))
-		    (shell-quote-argument file))
-      (setq log-text (buffer-string)))
-    (setf (unboxed-installed-file-log installed-file) log-text))
-  nil)
+	      installed-file)))
+    (unboxed--install-info-file-in-dir loc file)))
 
-(defun unboxed--remove-info-file-from-dir (installed-file)
-  "Remove info file specified in INSTALLED-FILE struct.
+(defun unboxed--remove-installed-info-file-in-dir (installed-file)
+  "Remove info file specified by INSTALLED-FILE.
 Removes entry for an unboxed package info file in the dir file 
 for unboxed packages"
   (let ((file (symbol-name (unboxed-installed-file-file installed-file)))
 	(loc (unboxed-installed-file-category-location
-	      installed-file))
-	full-path info-dir log-text)
-    (setq full-path (file-name-concat loc file))
-    (setq info-dir (file-name-directory full-path))
-    (with-temp-buffer
-      (call-process unboxed-install-info-program nil t nil
-		    (shell-quote-argument
-		     (concat "--info-dir=" info-dir))
-		    "--remove"
-		    (shell-quote-argument file))
-      (setq log-text (buffer-string)))
-    (setf (unboxed-installed-file-log installed-file) log-text)))
+	      installed-file)))
+    (unboxed--install-info-file-in-dir loc file)))
 
 (defun unboxed--make-install-logfile (base pkg-name &optional filename)
   "Make a temporary file for recording log buffers from async process.
@@ -196,107 +204,87 @@ Arguments:
 	(temporary-file-directory unboxed-temp-directory))
     (make-temp-file logfile-base)))
 
-(defun unboxed--async-byte-compile-file (file ajq k)
+(defun unboxed--make-byte-compile-k (logfile warnfile msgfile inst elc k)
+  "Make a continuation for a byte-compiler job.
+Arguments:
+  LOGFILE - path to compiler message logfile
+  WARNFILE - path to warnings logfile
+  MSGFILE - path to message logfile
+  INST - installed-file record to update with results from compilation
+  ELC - path to the compiled file
+  K - Continuation to invoke with updated installed-file INST"
+  (lambda (_proc-result)
+    (let ((log-text (when logfile (unboxed--check-logfile logfile)))
+	  (warn-text (when warnfile (unboxed--check-logfile warnfile)))
+	  (msg-text (when msgfile (unboxed--check-logfile msgfile))))
+      (when (and inst elc)
+	(setf (unboxed-installed-file-created inst)
+	      (file-exists-p elc)))
+      (unboxed--with-snaps
+       (log msgs warns)
+       (setq log-text (format "Host\n%s\nCompile Process\n%s" log log-text))
+       (setq warn-text (format "Host\n%s\nCompile Process\n%s" warns warn-text))
+       (setq msg-text (format "Host\n%s\nCompile Process\n%s" msgs msg-text)))
+      (setf (unboxed-installed-file-log inst) log-text)
+      (setf (unboxed-installed-file-warnings inst) warn-text)
+      (setf (unboxed-installed-file-messages inst) msg-text)
+      (when k
+	(funcall k inst)))))
+
+(defun unboxed--async-byte-compile-file (area src libdirs load-ls ajq k)
   "Byte-compile FILE in asyncronous sandbox.
 Arguments:
+  AREA - unboxing area
   FILE - the elisp source file to compile
+  LIBDIRS - paths to add to front of load-path during byte-compilation
+  LOAD-LS - files to load prior to compiling, e.g. autoload files
   AJQ - job queue for scheduling the async job
   K - continuation to call with the installed-file record."
-  (let ((el-name (file-name-nondirectory file))
+  (let ((el-name (file-name-nondirectory (unboxed--file-file src)))
+	(sys-lp (unboxed--area-system-load-path area))
 	logfile-base
 	logfile
 	warnfile
 	msgfile
-	sys-lp
 	lp
 	load-sexprs
-	log-text
-	warn-text
-	msg-text
-	elc-name
+	el-path
 	elc-path
-	result
+	inst
 	job-id
-	finish-k
-	proc
-	proc-result)
-    (while ls
-      (push `(load ,(pop ls)) load-sexprs))
+	program
+	finish-k)
+    (while load-ls
+      (push `(load ,(pop load-ls)) load-sexprs))
     (setq logfile-base (file-name-sans-extension el-name)
 	  logfile (unboxed--make-install-logfile "compile-log" nil logfile-base)
 	  warnfile (unboxed--make-install-logfile "warnings" nil logfile-base)
 	  msgfile (unboxed--make-install-logfile "messages" nil logfile-base)
-	  sys-lp (unboxed--area-system-load-path area)
 	  lp (append libdirs sys-lp)
 	  el-path (expand-file-name el-name)
 	  elc-path  (if (string= (file-name-extension el-path) "el")
 			(concat el-path "c")
 		      (concat el-path ".elc"))
+	  inst (unboxed--make-installed-file nil elc-path)
 	  job-id (intern (concat "byte-compile--" el-name))
-	  finish-k
-	  (lambda (proc-result)
-	    (when (file-exists-p logfile)
-	      (with-temp-buffer
-		(insert-file-contents logfile)
-		(setq log-text (buffer-string)))
-	      (delete-file logfile))
-	    (when (file-exists-p warnfile)
-	      (with-temp-buffer
-		(insert-file-contents warnfile)
-		(setq warn-text (buffer-string)))
-	      (delete-file warnfile))
-	    (when (file-exists-p msgfile)
-	      (with-temp-buffer
-		(insert-file-contents msgfile)
-		(setq msg-text (buffer-string)))
-	      (delete-file msgfile))
-	    (unboxed--with-snaps
-	     (log msgs warns)
-	     (setf (unboxed-installed-file-log inst) log)
-	     (setf (unboxed-installed-file-warnings inst) warns)
-	     (setf (unboxed-installed-file-messages inst) msgs)
-	     (funcall
-	      k
-	      `((compiled ,(file-exists-p elc-path))
-		(messages (host ,msgs) (sandbox ,msg-text))
-		(warnings (host ,warns) (sandbox ,warn-text))
-		(log (host ,log) (sandbox ,log-text))))))
+	  finish-k  (unboxed--make-byte-compile-k inst
+						  elc-path
+						  logfile
+						  warnfile
+						  msgfile
+						  k)
 	  program
-	  `(lambda ()
-	     (condition-case nil
-		 (progn
-		   (require 'bytecomp)
-		   (setq load-path ',lp)
-		   ,@load-sexprs
-		   (when (file-exists-p ,elc-path)
-		     (delete-file ,elc-path))
-		   (byte-compile-file ,el-path))
-	       (error nil))
-	     (let ((log-buffer (get-buffer byte-compile-log-buffer)))
-	       (when log-buffer
-		 (with-current-buffer log-buffer
-		   (write-region (point-min) (point-max) ,logfile))))
-	     (let ((log-buffer (get-buffer "*Warnings*")))
-	       (when log-buffer
-		 (with-current-buffer log-buffer
-		   (write-region nil nil ,warnfile))))
-	     (let ((log-buffer (get-buffer "*Messages*")))
-	       (when log-buffer
-		 (with-current-buffer log-buffer
-		   (write-region nil nil ,msgfile))))
-	     t))
-    (ajq-schedule-job ajq prog
-		       job-id
-		       (lambda (job)
-			 (message "Starting %s" job-id))
-		       (lambda (job v)
-			 (message "Starting %s: Done" job-id)
-			 (funcall finish-k v))
-		       unboxed--async-byte-compile-time-out
-		       (lambda (job)
-			 (message "Starting %s: Timed out" job-id))
-		       (lambda (job)
-			 (message "Starting %s: Cancelled" job-id)))))
+	  (unboxed--async-expr
+	   result
+	   `(progn 
+	      (require 'bytecomp)
+	      (setq load-path ',lp)
+	      ,@load-sexprs
+	      (when (file-exists-p ,elc-path)
+		(delete-file ,elc-path))
+	      (byte-compile-file ,el-path)
+	      (setq result t))))
+    (unboxed--simple-schedule ajq program job-id unboxed--async-byte-compile-time-out finish-k)))
 
 (defun unboxed--async-byte-compile-library (db installed-file ajq k)
   "Byte-compile library file of INSTALLED-FILE in a sandbox.
@@ -323,13 +311,10 @@ Arguments:
   (when (unboxed-installed-file-created installed-file)
     (unboxed--start-snaps log msgs warns)
     (let ((area (unboxed--sexpr-db-area db))
-	  (cats (unboxed--sexpr-db-categories db))
 	  (pkg-name (unboxed-installed-file-package installed-file))
 	  (pkg-version (unboxed-installed-file-version installed-file))
 	  (pkg-loc (unboxed-installed-file-package-location installed-file))
-	  (cat (unboxed-installed-file-category installed-file))
 	  (cat-loc (unboxed-installed-file-category-location installed-file))
-	  (src (symbol-name (unboxed-installed-file-package-source installed-file)))
 	  (lib (symbol-name (unboxed-installed-file-file installed-file)))
 	  (libdir (unboxed--sexpr-db-category-location db 'library))
 	  (themedir (unboxed--sexpr-db-category-location db 'theme))
@@ -338,9 +323,10 @@ Arguments:
 	  (elc-installed (unboxed-installed-file-struct-copy installed-file))
 	  (autoloads (unboxed--scoped-autoloads db))
 	  (lp-libdirs (unboxed--scoped-libdirs db))
-	  logfile-base logfile log-text warn-text msg-text
-	  el-name elc-name elc-path result warnfile msgfile
-	  proc proc-result sys-lp lp load-sexprs job-id finish-k)
+	  logfile el-path program
+	  el-name elc-name elc-path warnfile msgfile
+	  sys-lp lp load-sexprs job-id finish-k)
+      (setf (unboxed-installed-file-source elc-installed) installed-file)
       (setq logfile (unboxed--make-install-logfile "compile-log" pkg-name lib)
 	    warnfile (unboxed--make-install-logfile "warnings" pkg-name lib)
 	    msgfile (unboxed--make-install-logfile "messages" pkg-name lib)
@@ -355,87 +341,36 @@ Arguments:
 	    el-path (file-name-concat cat-loc el-name)
 	    elc-path (file-name-concat cat-loc elc-name)
 	    job-id (intern (concat "byte-compile-"(symbol-name pkg-name) "--" el-name))
-	    finish-k
-	    (lambda (proc-result)
-	      (setf (unboxed-installed-file-created elc-installed)
-		    (file-exists-p elc-path))
-	      (when (file-exists-p logfile)
-		(with-temp-buffer
-		  (insert-file-contents logfile)
-		  (setq log-text (buffer-string)))
-		(delete-file logfile))
-	      (when (file-exists-p warnfile)
-		(with-temp-buffer
-		  (insert-file-contents warnfile)
-		  (setq warn-text (buffer-string)))
-		(delete-file warnfile))
-	      (when (file-exists-p msgfile)
-		(with-temp-buffer
-		  (insert-file-contents msgfile)
-		  (setq msg-text (buffer-string)))
-		(delete-file msgfile))
-	      (unboxed--with-snaps
-	       (log msgs warns)
-	       (setq log-text (format "Host\n%s\nCompile Process\n%s" log log-text))
-	       (setq warn-text (format "Host\n%s\nCompile Process\n%s" warns warn-text))
-	       (setq msg-text (format "Host\n%s\nCompile Process\n%s" msgs msg-text)))
-	      (setf (unboxed-installed-file-log elc-installed) log-text)
-	      (setf (unboxed-installed-file-warnings elc-installed) warn-text)
-	      (setf (unboxed-installed-file-messages elc-installed) msg-text)
-	      (when k
-		(funcall k elc-installed)))
+	    finish-k  (unboxed--make-byte-compile-k elc-installed
+						    elc-path
+						    logfile
+						    warnfile
+						    msgfile
+						    k)
 	    program
-	    `(progn
-	       (condition-case nil
-		   (progn
-		     (require 'bytecomp)
-		     (setq load-path ',lp
-			   unboxed-package ',pkg-name
-			   unboxed-package-version ,pkg-version
-			   unboxed-package-box ,pkg-loc
-			   unboxed-library-directory ,libdir
-			   unboxed-theme-directory ,themedir
-			   unboxed-info-directory ,infodir
-			   unboxed-package-data-directory ,datadir)
-		     ;; ensure prompts during byte-compiling cause failure and do not just hang
-		     (defun yes-or-no-p (prompt)
-		       (error "Interactive yes-or-no-p prompting not allowed in batch compile mode - %S" prompt))
-		     (defun y-or-n-p (prompt)
-		       (error "Interactive y-or-n-p prompting not allowed in batch compile mode - %S" prompt))
-		     (defun y-or-n-p-with-timeout (prompt seconds default)
-		       (error "Interactive y-or-n-p-with-timeout prompting not allowed in batch compile mode - %S %S %S"
-			      prompt seconds default))
-		     (when (file-exists-p ,elc-path)
-		       (delete-file ,elc-path))
-		     ,@load-sexprs
-		     (byte-compile-file ,el-path))
-		 (error nil))
-	       (let ((log-buffer (get-buffer byte-compile-log-buffer)))
-		 (when log-buffer
-		   (with-current-buffer log-buffer
-		     (write-region nil nil ,logfile))))
-	       (let ((log-buffer (get-buffer "*Warnings*")))
-		 (when log-buffer
-		   (with-current-buffer log-buffer
-		     (write-region nil nil ,warnfile))))
-	       (let ((log-buffer (get-buffer "*Messages*")))
-		 (when log-buffer
-		   (with-current-buffer log-buffer
-		     (write-region nil nil ,msgfile))))))
+	    (unboxed--async-expr
+	     result
+	     `(progn 
+		(require 'bytecomp)
+		(setq load-path ',lp
+		      unboxed-package ',pkg-name
+		      unboxed-package-version ',pkg-version
+		      unboxed-package-box ',pkg-loc
+		      unboxed-library-directory ',libdir
+		      unboxed-theme-directory ',themedir
+		      unboxed-info-directory ',infodir
+		      unboxed-package-data-directory ',datadir)
+		     (when (file-exists-p ',elc-path)
+		       (delete-file ',elc-path))
+		     ',@load-sexprs
+		     (byte-compile-file ',el-path)
+		     (setq result t))
+	     logfile
+	     warnfile
+	     msgfile))
       (setf (unboxed-installed-file-file elc-installed) (intern elc-name))
       (setf (unboxed-installed-file-category elc-installed) 'byte-compiled)
-      (ajq-schedule-job ajq prog
-			 job-id
-			 (lambda (job)
-			   (message "Starting %s" job-id))
-			 (lambda (job v)
-			   (message "Starting %s: Done" job-id)
-			   (funcall finish-k v))
-			 unboxed--async-byte-compile-time-out
-			 (lambda (job)
-			   (message "Starting %s: Timed out" job-id))
-			 (lambda (job)
-			   (message "Starting %s: Cancelled" job-id))))))
+      (unboxed--simple-schedule ajq program job-id unboxed--async-byte-compile-time-out finish-k))))
       
 
 
@@ -446,348 +381,118 @@ Arguments:
 ;;;  the location for installed files
 ;;; install-action returns a list of file names actually installed
 ;;; relative to the supplied location
-(defun unboxed--install-list (cname db pd files install-action ajq k)
-  "Install list of FILES of package PD in DB from category CNAME.
-Install uses INSTALL-ACTION."
-  (let ((cat (cdr (assq cname (unboxed--sexpr-db-categories db))))
-	(ls files)
-	(pkg (unboxed-package-desc-name pd))
-	(pkg-loc (unboxed-package-desc-dir pd))
-	cat-loc
-	installed
-	file
-	installed-files
-	installed-file)
-    (setq cat-loc (unboxed-file-category-location cat))
+(defun unboxed--install-list (files install-action)
+  "Install list of FILES of using INSTALL-ACTION.
+Returns association list of source and destination paths."
+  (let ((ls files)
+	(q (make-queue))
+	src dst)
     (while ls
-      (setq file (pop ls))
-      (setq basename (file-name-nondirectory file)
-	    relpath (file-name-directory file)
-	    installed-file (funcall install-action
-				     db
-				     pd
-				     cat
-				     file
-				     nil
-				     ajq k))
-      (when installed-file
-	(setq installed-files (nconc installed-file installed-files))))
-    (setq installed (nreverse installed-files))
-    installed))
+      (setq src (pop ls))
+      (setq dst (funcall install-action src))
+      (queue-enqueue q `(,src . ,dst)))
+    (queue-all q)))
 
-(defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred ajq k)
+(defun unboxed--sexpr-rewriting-copy (src dest sexpr-pred)
   "Rewrite file SRC to DEST using SEXPR-PRED."
   (with-temp-buffer
     (insert-file-contents src)
     (rewriting-pcase--pcase-replace-sexpr sexpr-pred)
     (write-region nil nil dest)))
 
-(defun unboxed--simple-copy (src dest &optional aux ajq k)
+(defun unboxed--simple-copy (src dest &optional _aux)
   "Copy file SRC to DEST.  AUX data is ignored."
   (copy-file src dest t))
 
-(defun unboxed--install-copy (db pd cat file copy-action &optional aux  ajq k)
+(defun unboxed--install-copy (src-loc dst-loc file copy-action &optional aux)
   "Install file into CAT location using COPY-ACTION and AUX data.
 Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  CAT - category structure
-  FILE - file in package's boxed location
+  SRC-LOC - directory of source
+  DST-LOC - directory for destination
+  FILE - file relative to both SRC-LOC and DST-LOC
   COPY-ACTION - function with arguments (SOURCE DEST AUX)
   AUX - optional data to be passed to COPY-ACTION"
-  (unboxed--start-snaps log msgs warns)
-  (let ((dst-loc (unboxed-file-category-location cat))
-	(src-loc (unboxed-package-desc-dir pd))
-	inst dest src dst-file)
-    (setq dst-file (file-name-nondirectory file)
-	  dest (file-name-concat dst-loc dst-file)
-	  src (file-name-concat src-loc file)
-	  inst (unboxed--make-installed-file pd cat file dst-file))
-    (funcall copy-action src dest aux ajq k)
-    (setf (unboxed-installed-file-created inst)
-	  (file-exists-p dest))
-    (unboxed--with-snaps
-     (log msgs warns)
-     (setf (unboxed-installed-file-log inst) log)
-     (setf (unboxed-installed-file-warnings inst) warns)
-     (setf (unboxed-installed-file-messages inst) msgs))
-    `(,inst)))
+  (let ((dst-file (file-name-nondirectory file))
+	dest src)
+    (setq dest (file-name-concat dst-loc dst-file)
+	  src (file-name-concat src-loc file))
+    (funcall copy-action src dest aux)
+    dst-file))
 
-(defun unboxed--install-rewriting-library-copy (db pd cat file ajq k)
+(defun unboxed--install-rewriting-library-copy (src-loc dst-loc file new-box)
   "Install file into CAT location with rewriting if needed.
 Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  CAT - category name
-  FILE - file in package's boxed location"
-  (if (unboxed--contains-boxed-sexprs-p db pd cat file)
+  SRC-LOC - directory of source
+  DST-LOC - directory for destination
+  FILE - file relative to both SRC-LOC and DST-LOC
+  NEW-BOX - the directory package box-relative `load' expressions
+            should reference"
+  (if (unboxed--contains-boxed-sexprs-p src-loc file)
       (unboxed--install-copy
-       db pd cat file
+       src-loc dst-loc file
        #'unboxed--sexpr-rewriting-copy
-       (unboxed--make-rewrite-boxed-sexprs db pd cat file)
-       ajq
-       k)
+       (unboxed--make-rewrite-boxed-sexprs new-box))
     (unboxed--install-copy
-     db pd cat file
-     #'unboxed--simple-copy ajq k)))
+     src-loc dst-loc file
+     #'unboxed--simple-copy)))
 
-(defun unboxed--install-simple-copy (db pd cat file ajq k)
+(defun unboxed--install-simple-copy (src-loc dst-loc file)
   "Copies file into CAT location.
 Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  CAT - category name
-  FILE - file in package's boxed location"
-  (unboxed--install-copy db pd cat file #'unboxed--simple-copy ajq k))
+  SRC-LOC - directory of source
+  DST-LOC - directory for destination
+  FILE - file relative to both SRC-LOC and DST-LOC"
+  (unboxed--install-copy src-loc dst-loc file #'unboxed--simple-copy))
 
-(defun unboxed--install-pkg-relative-copy (db pd cat file ajq k)
+(defun unboxed--install-pkg-relative-copy (src-loc dst-loc file pkg)
   "Install file in package-specific subdirectory of CAT.
 Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  CAT - category name
-  FILE - file in package's boxed location"
-  (let ((pkg (unboxed-package-desc-name pd))
-	(dst-loc (unboxed-file-category-location cat))
-	(src-loc (unboxed-package-desc-dir pd))
-	inst dest src dst-file)
-    (setq dst-file (file-name-concat (symbol-name pkg)
-				     file)
-	  dest (file-name-concat dst-loc dst-file)
-	  src (file-name-concat src-loc file)
-	  inst (unboxed--make-installed-file pd cat file dst-file))
+  PKG - name of pkg as symbol
+  SRC-LOC - directory of source
+  DST-LOC - directory for destination
+  FILE - file relative to both SRC-LOC and DST-LOC"
+  (let ((dst-file (file-name-concat (symbol-name pkg) file))
+	dest src)
+    (setq dest (file-name-concat dst-loc dst-file)
+	  src (file-name-concat src-loc file))
     (when (> (length (file-name-nondirectory file)) 0)
       (make-directory (file-name-directory dest) t))
     (copy-file src dest t)
-    (setf (unboxed-installed-file-created inst)
-	  (file-exists-p dest))
-    `(,inst)))
+    dst-file))
 
 
-;;; "files" here are installed-file structs
+;;; files is an association list of source/destination pairs
 ;;; remove-action takes the same arguments as an install-cation
-(defun unboxed--remove-list (db files remove-action ajq k)
+(defun unboxed--remove-list (files remove-action)
   "Remove list of files FILES from DB using REMOVE-ACTION function.
 Arguments:
-  DB - unboxed database
-  FILES - installed-files in DB area
-  REMOVE-ACTION - function with arguments
-     (PD CAT FILE BOXED-LOCATION UNBOXED-LOCATION)"
+  FILES - Association list of source/destination file pairs
+  REMOVE-ACTION - function of two arguments - source and destination file"
   (let ((ls files)
-	cat
-	cat-loc
-	cname
-	pd pkg pkg-loc
-	deleted
-	file
-	removed-file)
+	(q (make-queue))
+	pr dfn)
     (while ls
-      (setq installed-file (pop ls))
-      (setq pkg (unboxed-installed-file-package installed-file))
-      (setq pd (assoc pkg pkgs))
-      (setq pd (and pd (cdr pd)))
-      (unless pd
-	(signal 'unboxed-invalid-package `(,pkg ,pkgs)))
-      (setq pkg-loc (unboxed-package-desc-dir pd))
-      (setq cname (unboxed-installed-file-category cat))
-      (setq cat (assoc cname cats))
-      (setq cat (and cat (cdr cat)))
-      (unless cat
-	(signal 'unboxed-invalid-category `(,cname ,cats)))
-      (setq cat-loc (unboxed-file-category-location cat))
-      (setq removed-file
-	    (funcall remove-action
-		     pkg
-		     cname
-		     (symbol-name (unboxed-installed-file-file installed-file))
-		     pkg-loc
-		     cat-loc))
-      (setq deleted `(,@removed-file ,@deleted)))
-    deleted))
+      (setq pr (pop ls))
+      (setq dfn (funcall remove-action (car pr) (cdr pr)))
+      (when dfn
+	(queue-enqueue q dfn)))
+    (queue-all q)))
 
-(defun unboxed--remove-simple-delete (_pkg cat file src-loc dst-loc)
-  "Delete FILE of category CAT installed in DST-LOC from package PKG.
+(defun unboxed--remove-simple-delete (dst-loc dst)
+  "Delete DST file in DST-LOC.
 Arguments:
-  PKG- unboxed package descriptor
-  CAT - category name
-  FILE - file in package's boxed location
-  SRC-LOC
-  DST-LOC"
-  (let ((dest (file-name-concat dst-loc (file-name-nondirectory file)))
-	(src (file-name-concat src-loc file)))
+  DST-LOC - location of DST
+  DST - file to remove"
+  (let ((dest (file-name-concat dst-loc (file-name-nondirectory dst))))
     (condition-case nil
 	(progn
 	  (and (file-exists-p dest)
 	       (delete-file dest))
-	  `(,dest))
+	  dest)
       (error ;; do nothing for now
 	 nil))))
 
 
-;;; These installers are used for lists of files of a particular
-;;; category for a specific package
-;;; file names are given as relative paths to the package directory
-(defun unboxed-install-theme (db pd files ajq k)
-  "Install theme files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--install-list 'theme db pd files #'unboxed--install-simple-copy ajq k))
-  
-(defun unboxed-install-library (db pd files ajq k)
-  "Install library files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--install-list 'library db pd files #'unboxed--install-rewriting-library-copy ajq k))
-
-(defun unboxed-install-module (db pd files ajq k)
-  "Install module (shared library) files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--install-list 'module db pd files #'unboxed--install-simple-copy ajq k))
-
-(defun unboxed-install-info (db pd files ajq k)
-  "Install info files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--install-list 'info db pd files #'unboxed--install-simple-copy ajq k))
-
-(defun unboxed-install-byte-compiled (_db _pd _files _ajq _k)
-  "Install (discard) byte-compiled files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-install-native-compiled (_db _pd _files _ajq _k)
-  "Install (discard) byte-compiled files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-install-data (db pd files ajq k)
-  "Install residual files FILES for package PD of DB in package data directory.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - file paths relateive to boxed directory of PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (let ((area (unboxed--sexpr-db-area db))
-	(loc (unboxed-file-category-location
-	      (cdr (assoc 'data
-			  (unboxed--sexpr-db-categories db)))))
-	(pkg (unboxed-package-desc-name pd))
-	pkg-dir libs installed elcs)
-    (setq pkg-dir (file-name-concat loc (symbol-name pkg)))
-    (make-directory pkg-dir t)
-    (setq installed (unboxed--install-list
-		     'data db pd files
-		     #'unboxed--install-pkg-relative-copy)
-	  libs (seq-filter
-		(lambda (inst)
-		  (unboxed-data-library-p
-		   (symbol-name (unboxed-installed-file-file inst))))
-		installed)
-	  elcs (mapcan
-		(lambda (inst)
-		  (unboxed--async-byte-compile-library db inst))
-		libs))
-    (nconc installed (nreverse elcs))))
-
-
-;;; These removers are used for lists of installed files
-(defun unboxed-remove-theme (db _pd files ajq k)
-  "Remove theme files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--remove-list db files #'unboxed--remove-simple-delete ajq k))
-  
-(defun unboxed-remove-library (db _pd files ajq k)
-  "Remove library files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--remove-list db files #'unboxed--remove-simple-delete ajq k))
-
-(defun unboxed-remove-byte-compiled (_db _pd _files _ajq _k)
-  "Remove byte-compiled files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-remove-native-compiled (_db _pd _files _ajq _k)
-  "Remove native-compiled files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-remove-module (db _pd files ajq k)
-  "Remove module (shared library) files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--remove-list db files #'unboxed--remove-simple-delete ajq k))
-
-(defun unboxed-remove-info (db _pd files ajq k)
-  "Remove info files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--remove-list db files #'unboxed--remove-simple-delete ajq k))
-
-(defun unboxed-remove-data (db _pd files ajq k)
-  "Remove data files FILES for package PD of DB.
-Arguments:
-  DB - unboxed database
-  PD - unboxed package descriptor
-  FILES - installed files from PD
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (unboxed--remove-list db files #'unboxed--remove-simple-delete ajq k))
 
 
 
@@ -800,190 +505,362 @@ Arguments:
 ;;;   all-cats is provided since the install locations vary between
 ;;; system and user package sets.
 
+
+(eval-and-compile
+  (defun unboxed--format-doc-variable (sym)
+    "Format a variable name SYM for appearance in a docstring."
+    (let ((s (symbol-name sym)))
+      (when (= (aref s 0) ?_)
+	(setq s (substring s 1)))
+      (upcase s))))
+
+;; (defmacro unboxed--define-area-method-definer
+;;     (outer-prefix method method-text nargs doc-template)
+;;   "Define method definer for an area
+;; Arguments:
+;;   OUTER-PREFIX - prefix of definer macros
+;;   METHOD - name of area method
+;;   METHOD-TEXT Verb describing method for lead of macro docstring
+;;   NARGS - number of args of method signature
+;;   DOC-TEMPLATE - template for method definer docstring"
+;;   (let ((macro-name (intern (format "%s-define-%s" outer-prefix method)))
+;; 	(multi-macro-name (intern (format "%s-define-multiple-%s" outer-prefix method)))
+;; 	(dls-var (cl-gensym "dls")))
+;;   `(progn
+;;      (defmacro ,macro-name (category name args &rest body)
+;;        ,(format "Define an unboxing `%s' method.
+;; Arguments:
+;;   CATEGORY - category of the method
+;;   NAME - the function name that will be bound
+;;   ARGS - the variables that will be bound (must have 5)
+;;   BODY - the body of the method"
+;; 		method)
+;;        (when (/= (length args) ,nargs)
+;; 	 (signal 'unboxed-invalid-method-signature `(,method ,',args)))
+;;        (let ((doc (concat (format ,(concat method-text " of %s files.")
+;; 				  category)
+;; 			  (apply #'format ,(concat "\n" doc-template)
+;; 				 (mapcar #'unboxed--format-doc-variable args)))))
+;; 	 `(defun ,',name ,',args ,',doc
+;; 		 ,',@body)))
+;;      (defmacro ,multi-macro-name (prefix categories args &rest body)
+;;        ,(format "Define multiple `%s' methods having the same body.
+;; Each method will be named `PREFIX-%s-CATEGORY'.
+;; Arguments:
+;;   PREFIX - used in generating method names
+;;   CATEGORIES - list of category names
+;;   ARGS - as in `%s'
+;;   BODY - the body of each method definition"
+;; 		method method macro-name)
+;;        (let ((,dls-var
+;; 	      (mapcar (lambda (cat)
+;; 			`(,macro-name
+;; 			  ,',cat
+;; 			  ,',(intern (format "%s--%s"
+;; 					     prefix
+;; 					     cat))
+;; 			  ,',args
+;; 			  ('\,@ ,'body)))
+;; 		      categories)))
+;; 	 `(progn (,'\,@ ,dls-var)))))))
+
+;; (unboxed--define-area-method-definer
+;;  unboxed- install "Install" 5
+;;  "Arguments:
+;;   %s - Unboxing area record
+;;   %s - Directory of source files
+;;   %s - Directory of destination files
+;;   %s - association list of relative source paths to destination paths
+;;   %s - continuation taking final list of installed files")
+
+
+(defmacro unboxed--define-install (category name args dst-loc &rest body)
+  "Define an unboxing `install' method.
+Arguments:
+  CATEGORY - category of the method
+  NAME - the function name that will be bound
+  ARGS - the variables that will be bound (must have 5)
+  DST-LOC - the variable for binding the destination location
+  BODY - the body of the method"
+  (when (/= (length args) 5)
+    (signal 'unboxed-invalid-install-signature args))
+  (let ((doc (concat (format "Install  %s files."
+			     category)
+		     (apply #'format "
+Arguments:
+  %s - unboxing area record
+  %s - name of package as symbol
+  %s - location of source files (old box)
+  %s - file paths relative to boxed directory of pkg
+  %s - new location of files from PKG for relative loading"
+			    (mapcar #'unboxed--format-doc-variable args)))))
+    `(defun ,name ,args ,doc
+	    (let ((,dst-loc (unboxed--area-category-location
+			     ,(car args) ',category)))
+	      ,@body))))
+
+(defmacro unboxed--define-installers (prefix categories args dst-loc &rest body)
+  "Define multiple `install' methods having the same body.
+Each method will be named `PREFIX-install-CATEGORY'.
+Arguments:
+  PREFIX - used in generating method names
+  CATEGORIES - list of category names
+  ARGS - as in `unboxed--define-install'
+  DST-LOC - as in `unboxed--define-install'
+  BODY - the body of each method definition"
+  `(progn
+     ,@(mapcar (lambda (cat)
+		 `(unboxed--define-install
+		   ,cat
+		   ,(intern (format "%s-install-%s"
+				    prefix
+				    cat))
+		   ,args
+		   ,dst-loc
+		   ,@body))
+	       categories)))
+
+;; simple copy into category location
+(unboxed--define-installers
+ unboxed-
+ (theme module info )
+ (area _pkg src-loc files _new-box)
+ dst-loc
+ (unboxed--install-list
+  files
+  (lambda (src)
+    (unboxed--install-simple-copy src-loc dst-loc src))))
+
+;; these explicitly ignore any compiled files
+(unboxed--define-installers
+ unboxed-
+ (byte-compiled native-compiled)
+ (area _pkg _src-loc _files _new-box)
+ _dst-loc
+ nil)
+
+;; copy into library directory, possibly rewriting
+(unboxed--define-install
+ library
+ unboxed--install-library
+ (area _pkg src-loc files new-box)
+ dst-loc
+ (unboxed--install-list
+  files
+  (lambda (src)
+    (unboxed--install-rewriting-library-copy src-loc dst-loc src new-box))))
+
+;; copy into package-specific data directory
+(unboxed--define-install
+ data
+ unboxed--install-data
+ (area pkg src-loc files _new-box)
+ dst-loc
+ (unboxed--install-list
+  files
+  (lambda (src)
+    (unboxed--install-pkg-relative-copy src-loc dst-loc src pkg))))
+
+(defmacro unboxed--define-remove (category name args dst-loc &rest body)
+  "Define an unboxing `remove' method.
+Arguments:
+  CATEGORY - category of the method
+  NAME - the function name that will be bound
+  ARGS - the variables that will be bound (must have 5)
+  DST-LOC - the variable for binding the destination location
+  BODY - the body of the method"
+  (when (/= (length args) 5)
+    (signal 'unboxed-invalid-remove-signature args))
+  (let ((doc (concat (format "Remove  %s files."
+			     category)
+		     (apply #'format "
+Arguments:
+  %s - unboxing area record
+  %s - name of package as symbol
+  %s - location of source files (old box)
+  %s - file paths relative to boxed directory of pkg
+  %s - new location of files from PKG for relative loading"
+			    (mapcar #'unboxed--format-doc-variable args)))))
+    `(defun ,name ,args ,doc
+	    (let ((,dst-loc (unboxed--area-category-location
+			     ,(car args) ',category)))
+	      ,@body))))
+
+(defmacro unboxed--define-removers (prefix categories args dst-loc &rest body)
+  "Define multiple `remove' methods having the same body.
+Each method will be named `PREFIX-remove-CATEGORY'.
+Arguments:
+  PREFIX - used in generating method names
+  CATEGORIES - list of category names
+  ARGS - as in `unboxed--define-remove'
+  DST-LOC - as in `unboxed--define-remove'
+  BODY - the body of each method definition"
+  `(progn
+     ,@(mapcar (lambda (cat)
+		 `(unboxed--define-remove
+		   ,cat
+		   ,(intern (format "%s-remove-%s"
+				    prefix
+				    cat))
+		   ,args
+		   ,dst-loc
+		   ,@body))
+	       categories)))
+
+;; simple delete files from category location
+(unboxed--define-removers
+ unboxed-
+ (theme module library byte-compiled native-compiled data)
+ (area _pkg _src-loc files _new-box)
+ dst-loc
+ (unboxed--remove-list 
+  files
+  (lambda (_src dst)
+    (unboxed--remove-simple-delete dst-loc dst))))
+
+;; for info files, first remove entries from dir file
+;; then delete the file
+(unboxed--define-remove
+ info
+ unboxed--remove-info
+ (area _pkg _src-loc files _new-box)
+ dst-loc
+ (unboxed--remove-list
+  files
+  (lambda (_src dst)
+    (unboxed--remove-info-file-from-dir dst-loc dst)
+    (unboxed--remove-simple-delete dst-loc dst))))
+
+
+(defmacro unboxed--define-finalize-install (category name args &rest body)
+  "Define an unboxing `finalize-install' method.
+Arguments:
+  CATEGORY - category of the method
+  NAME - the function name that will be bound
+  ARGS - the variables that will be bound (must have 5)
+  BODY - the body of the method"
+  (when (/= (length args) 4)
+    (signal 'unboxed-invalid-finalize-install-signature args))
+  (let ((doc (concat (format "Finalize installation of %s files."
+			     category)
+		     (apply #'format "
+Arguments:
+  %s - Unboxing area record
+  %s - Directory of source files
+  %s - Directory of destination files
+  %s - association list of relative source paths to destination paths"
+			    (mapcar #'unboxed--format-doc-variable args)))))
+    `(defun ,name ,args ,doc
+	    ,@body)))
+
+(defmacro unboxed--define-finalize-installers (prefix categories args &rest body)
+  "Define multiple `finalize-install' methods having the same body.
+Each method will be named `PREFIX-finalize-install-CATEGORY'.
+Arguments:
+  PREFIX - used in generating method names
+  CATEGORIES - list of category names
+  ARGS - as in `unboxed--define-finalize-install'
+  BODY - the body of each method definition"
+  `(progn
+     ,@(mapcar (lambda (cat)
+		 `(unboxed--define-finalize-install
+		   ,cat
+		   ,(intern (format "%s-finalize-install-%s"
+				    prefix
+				    cat))
+		   ,args
+		   ,@body))
+	       categories)))
+
+(defmacro unboxed--define-finalize-remove (category name args &rest body)
+  "Define an unboxing `finalize-remove' method.
+Arguments:
+  CATEGORY - category of the method
+  NAME - the function name that will be bound
+  ARGS - the variables that will be bound (must have 5)
+  BODY - the body of the method"
+  (when (/= (length args) 4)
+    (signal 'unboxed-invalid-finalize-remove-signature args))
+  (let ((doc (concat (format "Finalize removal of %s files."
+			     category)
+		     (apply #'format "
+Arguments:
+  %s - Unboxing area record
+  %s - Directory of source files
+  %s - Directory of destination files
+  %s - association list of relative source paths to destination paths"
+			    (mapcar #'unboxed--format-doc-variable args)))))
+    `(defun ,name ,args ,doc
+	    ,@body)))
+
+(defmacro unboxed--define-finalize-removers (prefix categories args &rest body)
+  "Define multiple `finalize-remove' methods having the same body.
+Each method will be named `PREFIX-finalize-remove-CATEGORY.'
+Arguments:
+  PREFIX - used in generating method names
+  CATEGORIES - list of category names
+  ARGS - as in `unboxed--define-finalize-remove'
+  BODY - the body of each method definition"
+  `(progn
+     ,@(mapcar (lambda (cat)
+		 `(unboxed--define-finalize-remove
+		   ,cat
+		   ,(intern (format "%s-finalize-remove-%s"
+				    prefix
+				    cat))
+		   ,args
+		   ,@body))
+	       categories)))
+								     
+								     
+(unboxed--define-finalize-installers
+ unboxed-
+ (byte-compiled native-compiled module data theme)
+ (_area _src-loc _dst-loc _files)
+ nil)
+
+(unboxed--define-finalize-install
+ info unboxed--finalize-install-info (_area _src-loc dst-loc files)
+ (let ((ls files)
+       file)
+   (while ls
+     (setq file (cdr (pop ls)))
+     (unboxed--install-info-file-in-dir dst-loc file)))
+ nil)
+
+(unboxed--define-finalize-removers
+ unboxed-
+ (byte-compiled native-compiled module data theme library info)
+ (_area _src-loc _dst-loc _files)
+ nil)
+
+
 ;; rebuild the unboxed library autoloads and byte-compile
 ;; the libraries
-(defun unboxed-finalize-install-library (db cat files ajq k)
-  "Finalize installation of library files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (let ((loc (unboxed-file-category-location cat))
-	(area (unboxed--sexpr-db-area db))
-	autoloads-fn autoloads-file result ls
-	inst comp-file new-installed)
-    (setq autoloads-fn (unboxed--area-autoloads-file area)
-	  autoloads-file (expand-file-name (file-name-concat loc autoloads-fn))
-	  ls files)
-    (let ((al-buffer (get-file-buffer autoloads-file)))
-      (when al-buffer
-	(with-current-buffer al-buffer
-	  (set-buffer-modified-p nil))
-	(kill-buffer al-buffer)))
-    (make-directory-autoloads loc autoloads-file)
-    (let ((default-directory loc))
-      (setq result (unboxed--async-byte-compile-file autoloads-file))
-      (when (and (stringp result) (> (length result) 0))
-	(message "Compile log for %S\n%s" autoloads-file result))
-      (while ls
-	(setq inst (pop ls))
-	(setq comp-file (unboxed--async-byte-compile-library db inst))
-	(when comp-file
-	  (setq new-installed (nconc comp-file new-installed)))))
-    new-installed))
+;; (unboxed--define-finalize-install
+;;  library unboxed-finalize-install-library (area _src-loc dst-loc files)
+;;  (let ((autoloads-fn (unboxed--area-autoloads-file area))
+;;        (ls files)
+;;        autoloads-file result comp-file new-installed)
+;;    (setq autoloads-file (expand-file-name (file-name-concat dst-loc autoloads-fn)))
+;;    (let ((al-buffer (get-file-buffer autoloads-file)))
+;;      (when al-buffer
+;;        (with-current-buffer al-buffer
+;; 	 (set-buffer-modified-p nil))
+;;        (kill-buffer al-buffer)))
+;;    (make-directory-autoloads dst-loc autoloads-file)
+;;    (let ((default-directory dst-loc))
+;;      (setq result (unboxed--async-byte-compile-file autoloads-file))
+;;      (when (and (stringp result) (> (length result) 0))
+;;        (message "Compile log for %S\n%s" autoloads-file result))
+;;      (while ls
+;;        (setq inst (pop ls))
+;;        (setq comp-file (unboxed--async-byte-compile-library db inst))
+;;        (when comp-file
+;; 	 (setq new-installed (nconc comp-file new-installed)))))
+;;    new-installed))
 
-(defun unboxed-finalize-install-byte-compiled (_db _cat _files _ajq _k)
-  "Finalize installation of byte-compiled files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
 
-(defun unboxed-finalize-install-native-compiled (_db _cat _files _ajq _k)
-  "Finalize installation of native-compiled files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-;; rebuild the directory file
-(defun unboxed-finalize-install-info (_db _cat files _ajq _k)
-  "Finalize installation of info files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  (let ((ls files)
-	file)
-    (while ls
-      (setq file (pop ls))
-      (unboxed--install-info-file-in-dir file))
-    files))
-
-;; other categories require no additional work
-(defun unboxed-finalize-install-module (_db _cat _files _ajq _k)
-  "Finalize installation of module files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-install-data (_db _cat _files _ajq _k)
-  "Finalize installation of data files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-install-theme (_db _cat _files _ajq _k)
-  "Finalize installation of theme files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-remove-theme (_db _cat _files _ajq _k)
-  "Finalize removal of theme files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-  
-(defun unboxed-finalize-remove-library (_db _cat _files _ajq _k)
-  "Finalize removal of library files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-remove-byte-compiled (_db _cat _files _ajq _k)
-  "Finalize removal of byte-compiled files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-remove-native-compiled (_db _cat _files _ajq _k)
-  "Finalize removal of native-compiled files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-remove-module (_db _cat _files _ajq _k)
-  "Finalize removal of module files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-remove-info (_db _cat _files _ajq _k)
-  "Finalize removal of info files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
-
-(defun unboxed-finalize-remove-data (_db _cat _files _ajq _k)
-  "Finalize removal of data files FILES in category CAT of DB."
-  "Test whether FILE contains a sexp referencing the package's location.
-Arguments:
-  DB - unboxed database
-  CAT - category name
-  FILES - files in the category's location
-  AJQ - async job queue
-  k - continuation receiving individual installed file records"
-  nil)
 
 	
 
