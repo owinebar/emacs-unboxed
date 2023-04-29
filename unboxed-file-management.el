@@ -244,7 +244,7 @@ Arguments:
   SETUP-EXPRS - list of sexps to execute before byte-compiling, e.g. loading
                 compile-time requirements not on the standard load-path
   AJQ - job queue for scheduling the async job
-  K - continuation to call with the installed-file record"
+  FINISH-K - continuation to call with the installed-file record"
   (let ((job-id (intern (format "byte-compile--%s-%s"
 				pkg
 				(file-name-nondirectory src))))
@@ -260,10 +260,13 @@ Arguments:
 		(delete-file ,elc-path))
 	      (byte-compile-file ,src)
 	      (setq result ,elc-path))))
-    (unboxed--simple-schedule ajq program job-id
-			      unboxed--async-byte-compile-time-out
-			      finish-k)))
-
+    (if ajq
+	(unboxed--simple-schedule ajq program job-id
+				  unboxed--async-byte-compile-time-out
+				  finish-k)
+      (async-start
+       `(lambda () ,program)
+       ,finish-k)
 (defun unboxed--async-byte-compile-files (area pkg dst-cat loc srcs libdirs load-ls setup-exprs ajq k)
   "Byte-compile FILE in asyncronous sandbox.
 Arguments:
@@ -584,13 +587,6 @@ Arguments:
 ;;; system and user package sets.
 
 
-(eval-and-compile
-  (defun unboxed--format-doc-variable (sym)
-    "Format a variable name SYM for appearance in a docstring."
-    (let ((s (symbol-name sym)))
-      (when (= (aref s 0) ?_)
-	(setq s (substring s 1)))
-      (upcase s))))
 
 ;; (defmacro unboxed--define-area-method-definer
 ;;     (outer-prefix method method-text nargs doc-template)
@@ -710,772 +706,43 @@ Arguments:
 		 (if ajq
 		     (unboxed--simple-schedule ajq program job-id timeout k)
 		   (,imm-name area pkg-id  pkg-loc files data-loc)))))))))
-    
-(defmacro unboxed--define-installers (prefix categories args dst-loc &rest body)
-  "Define multiple `install' methods having the same body.
-Each method will be named `PREFIX-install-CATEGORY'.
-Arguments:
-  PREFIX - used in generating method names
-  CATEGORIES - list of category names
-  ARGS - as in `unboxed--define-install'
-  DST-LOC - as in `unboxed--define-install'
-  BODY - the body of each method definition"
-  `(progn
-     ,@(mapcar (lambda (cat)
-		 `(unboxed--define-install
-		   ,cat
-		   ,(intern (format "%s-install-%s"
-				    prefix
-				    cat))
-		   ,(intern (format "%s-immediate-install-%s"
-				    prefix
-				    cat))
-		   ,args
-		   ,dst-loc
-		   ,@body))
-	       categories)))
 
-(defmacro unboxed--define-install-area-package (prefix categories args dst-loc &rest body)
-  "Define multiple `install' methods having the same body.
-Each method will be named `PREFIX-install-CATEGORY'.
-Arguments:
-  PREFIX - used in generating method names
-  CATEGORIES - list of category names
-  ARGS - as in `unboxed--define-install'
-  DST-LOC - as in `unboxed--define-install'
-  BODY - the body of each method definition"
-  `(progn
-     ,@(mapcar (lambda (cat)
-		 `(unboxed--define-install
-		   ,cat
-		   ,(intern (format "%s-install-%s"
-				    prefix
-				    cat))
-		   ,(intern (format "%s-immediate-install-%s"
-				    prefix
-				    cat))
-		   ,args
-		   ,dst-loc
-		   ,@body))
-	       categories)))
-
-;; simple copy into category location
-(unboxed--define-installers
- unboxed-
- (theme module info )
- (area _pkg src-loc files _new-box)
- dst-loc
- (unboxed--install-list
-  files
-  (lambda (src)
-    (unboxed--install-simple-copy src-loc dst-loc src))))
-
-;; these explicitly ignore any compiled files
-(unboxed--define-installers
- unboxed-
- (byte-compiled native-compiled)
- (area _pkg _src-loc _files _new-box)
- _dst-loc
- nil)
-
-;; copy into library directory, possibly rewriting
-(unboxed--define-install
- library
- unboxed--install-library
- unboxed--immediate-install-library
- (area _pkg src-loc files new-box)
- dst-loc
- (unboxed--install-list
-  files
-  (lambda (src)
-    (unboxed--install-rewriting-library-copy src-loc dst-loc src new-box))))
-
-;; copy into package-specific data directory
-(unboxed--define-install
- data
- unboxed--install-data
- unboxed--immediate-install-data
- (area pkg src-loc files _new-box)
- dst-loc
- (unboxed--install-list
-  files
-  (lambda (src)
-    (unboxed--install-pkg-relative-copy src-loc dst-loc src pkg))))
-
-(defun unboxed--immediate-unbox-package (area pkg pkg-loc cat-files data-loc)
-  
-
-(defmacro unboxed--define-remove (category name args dst-loc &rest body)
-  "Define an unboxing `remove' method.
-Arguments:
-  CATEGORY - category of the method
-  NAME - the function name that will be bound
-  ARGS - the variables that will be bound (must have 5)
-  DST-LOC - the variable for binding the destination location
-  BODY - the body of the method"
-  (when (/= (length args) 5)
-    (signal 'unboxed-invalid-remove-signature args))
-  (let ((doc (concat (format "Remove  %s files."
-			     category)
-		     (apply #'format "
-Arguments:
-  %s - unboxing area record
-  %s - name of package as symbol
-  %s - location of source files (old box)
-  %s - file paths relative to boxed directory of pkg
-  %s - new location of files from PKG for relative loading"
-			    (mapcar #'unboxed--format-doc-variable args)))))
-    `(defun ,name ,args ,doc
-	    (let ((,dst-loc (unboxed--area-category-location
-			     ,(car args) ',category)))
-	      ,@body))))
-
-(defmacro unboxed--define-removers (prefix categories args dst-loc &rest body)
-  "Define multiple `remove' methods having the same body.
-Each method will be named `PREFIX-remove-CATEGORY'.
-Arguments:
-  PREFIX - used in generating method names
-  CATEGORIES - list of category names
-  ARGS - as in `unboxed--define-remove'
-  DST-LOC - as in `unboxed--define-remove'
-  BODY - the body of each method definition"
-  `(progn
-     ,@(mapcar (lambda (cat)
-		 `(unboxed--define-remove
-		   ,cat
-		   ,(intern (format "%s-remove-%s"
-				    prefix
-				    cat))
-		   ,args
-		   ,dst-loc
-		   ,@body))
-	       categories)))
-
-;; simple delete files from category location
-(unboxed--define-removers
- unboxed--immediate
- (theme module library byte-compiled native-compiled data)
- (area _pkg _src-loc files _new-box)
- dst-loc
- (unboxed--remove-list
-  files
-  (lambda (_src dst)
-    (unboxed--remove-simple-delete dst-loc dst))))
-
-;; for info files, first remove entries from dir file
-;; then delete the file
-(unboxed--define-remove
- info
- unboxed--immediate-remove-info
- (area _pkg _src-loc files _new-box)
- dst-loc
- (unboxed--remove-list
-  files
-  (lambda (_src dst)
-    (unboxed--remove-info-file-from-dir dst-loc dst)
-    (unboxed--remove-simple-delete dst-loc dst))))
-
-(cl-defgeneric unboxed-category-predicate (category area location file)
-  "Test whether FILE  in LOCATION is in CATEGORY for unboxing AREA.
-Arguments:
-  CATEGORY
-  AREA
-  LOCATION
-  FILE"
-  nil)
-
-(cl-defgeneric unboxed-install-package-category (category area pkg pkg-box srcs data-box)
-  "Install method for files of an unboxed package belonging to category.
-Arguments:
-  CATEGORY
-  AREA
-  PKG
-  PKG-BOX
-  SRCS
-  DATA-BOX"
-  nil)
-
-  
-(cl-defgeneric unboxed-initialize-install-category-files (category area files)
-  "Initialize install method for installed files belonging to category.
-Arguments:
-  CATEGORY - symbol identifying the category or unboxed-file-category
-  AREA - unboxing area record
-  FILES - installed files of category"
-  nil)
-
-(cl-defgeneric unboxed-finalize-install-category-files (category area files)
-  "Finalize install method for installed files belonging to category.
-Arguments:
-  CATEGORY - symbol identifying the category or unboxed-file-category
-  AREA - unboxing area record
-  FILES - installed files of category"
-  nil)
+;; FIXME - not correct
+(defun unboxed--update-autoloads-file (category area files)
+  (let* ((cat (unboxed--area-category area category))
+	 (cat-loc (unboxed-file-category-location cat))
+	 (area-name (unboxed--area-name area))
+	 (autoloads-fn (unboxed--area-autoloads-file area))
+	 (autoloads-file (expand-file-name (file-name-concat cat-loc
+							     autoloads-fn)))
+	 (finish-k
+	  (unboxed--make-byte-compile-k
+	   (intern (format ":area-%s" area-name))
+	   cat-loc
+	   src
+	   'byte-compiled
+	   (lambda (inst)
+	     (message "Autoload file\n%s"
+		      (let ((inhibit-message t))
+			(pp inst)))
+	     inst)))
+	 result comp-file new-installed)
+   (let ((al-buffer (get-file-buffer autoloads-file)))
+     (when al-buffer
+       (with-current-buffer al-buffer
+	 (set-buffer-modified-p nil))
+       (kill-buffer al-buffer)))
+   (make-directory-autoloads cat-loc autoloads-file)
+   (let ((default-directory cat-loc))
+     (unboxed--async-byte-compile-file nil
+				       autoloads-file
+				       nil
+				       nil
+				       finish-k))))
+     
 
 
-(cl-defgeneric unboxed-remove-package-category (category area pkg pkg-box files)
-  "Remove method for files of an unboxed package belonging to category.
-Arguments:
-  CATEGORY
-  AREA
-  PKG
-  PKG-BOX
-  FILES"
-  nil)
-
-(cl-defgeneric unboxed-initialize-remove-category-files (category area files)
-  "Initialize remove method for installed files belonging to category.
-Arguments:
-  CATEGORY
-  AREA
-  FILES"
-  nil)
-
-(cl-defgeneric unboxed-finalize-remove-category-files (category area files)
-  "Finalize remove method for installed files belonging to category.
-Arguments:
-  CATEGORY
-  AREA
-  FILES"
-  nil)
-
-(defmacro unboxed--define-file-category-helper (name area params &rest clauses)
-  "Helper macro for `unboxed-define-file-category'.
-Arguments:
-   NAME - category name
-   AREA - area name
-   PARAMS - accumulated parameters for category structure
-   CLAUSES - remaining clauses to be processed"
-  (if (null clauses)
-      `(unboxed--add-file-category-to-area
-	',area
-	(unboxed-file-category-create :name ',name :area ',area ,@params))
-    (let ((area-val (or (unboxed--lookup-area area)
-			(error "Undefined unboxing area %s" area))))
-      (pcase clauses
-	(`((path ,path). ,remaining)
-	 `(unboxed--define-file-category-helper ,name ,area
-						(,@params :path-var ',path)
-						,@remaining))
-	(`((location ,location) . ,remaining)
-	 `(unboxed--define-file-category-helper ,name ,area
-						(,@params :location ',location)
-						,@remaining))
-	(`((libraries . ,libraries) . ,remaining)
-	 `(unboxed--define-file-category-helper ,name ,area
-						(,@params :libraries ',libraries)
-						,@remaining))
-	(`((predicate . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-category-predicate
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       location file)
-	      ,(format "Test file for membership in category %s in area %s." name area)
-	      (unboxed-category-predicate ',name ,area-val location file))
-	    (cl-defmethod unboxed-category-predicate
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       location file)
-	      ,(format "Test file for membership in category %s in area %s." name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params ,@remaining)))
-	(`((install . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-install-package-category
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       pkg pkg-box srcs data-box)
-	      ,(format "Install files in category %s of package in area %s." name area)
-	      (unboxed-install-package-category ',name ,area-val pkg pkg-box srcs data-box))
-	    (cl-defmethod unboxed-install-package-category
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       pkg pkg-box srcs data-box)
-	      ,(format "Install files in category %s of package in area %s." name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params ,@remaining)))
-	(`((remove . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-remove-package-category
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       pkg pkg-box files)
-	      ,(format "Remove files in category %s of package in area %s." name area)
-	      (unboxed-remove-package-category ',name ,area-val pkg pkg-box files))
-	    (cl-defmethod unboxed-remove-package-category
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       pkg pkg-box files)
-	      ,(format "Remove files in category %s of package in area %s." name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params ,@remaining)))
-	(`((initialize-install . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-initialize-install-category-files
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       files)
-	      ,(format
-		(concat "Initialize install of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      (unboxed-initialize-install-category-files ',name ,area-val files))
-	    (cl-defmethod unboxed-initialize-install-category-files
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       files)
-	      ,(format
-		(concat "Initialize install of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params ,@remaining)))
-	(`((finalize-install . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-finalize-install-category-files
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       files)
-	      ,(format
-		(concat "Finalize install of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      (unboxed-finalize-install-category-files ',name ,area-val files))
-	    (cl-defmethod unboxed-finalize-install-category-files
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       files)
-	      ,(format
-		(concat "Finalize install of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params ,@remaining)))
-	(`((initialize-remove . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-initialize-remove-category-files
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       files)
-	      ,(format
-		(concat "Initialize remove of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      (unboxed-initialize-remove-category-files ',name ,area-val files))
-	    (cl-defmethod unboxed-initialize-remove-category-files
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       files)
-	      ,(format
-		(concat "Initialize remove of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params
-						  ,@remaining)))
-	(`((finalize-remove . ,body) . ,remaining)
-	 `(progn
-	    (cl-defmethod unboxed-finalize-remove-category-files
-	      ((category (eql ',name))
-	       (area (eql ',area))
-	       files)
-	      ,(format
-		(concat "Finalize remove of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      (unboxed-finalize-remove-category-files ',name ,area-val files))
-	    (cl-defmethod unboxed-finalize-remove-category-files
-	      ((category (eql ',name))
-	       (area (eql ,area-val))
-	       files)
-	      ,(format
-		(concat "Finalize remove of installed files"
-			"in category %s of package in area %s.")
-		name area)
-	      ,@body)
-	    (unboxed--define-file-category-helper ,name ,area ,params
-						  ,@remaining)))
-	(unrecognized
-	 (error "Unrecognized clause unboxed-define-file-category %s %s %S"
-		name area unrecognized))))))
-
-(defmacro unboxed-define-file-category (name area &rest clauses)
-  "Define a file-category NAME in unboxing area AREA according to CLAUSES.
-Clauses may have the form:
-  (path PATH-VARIABLE) - the path variable associated with this category
-  (location LOCATION) - the directory in which category files will be
-                        installed
-  (libraries LIBRARY0 LIBRARY1 ...) -
-                   list of libraries that must be loaded for the generic method
-                   definitions of this category.
-                   Unboxed libraries are implicitly added.
-  (predicate BODY ...) - define `unboxed-category-predicate' method
-                         Arguments (category area location file)
-                             bound in BODY...
-  (install BODY ...) - define `unboxed-install-package-category' method
-                       Arguments (category area pkg pkg-box srcs data-box)
-                           bound in BODY...
-  (remove BODY ...) - define a `unboxed-remove-package-category' method
-                       Arguments (category area pkg pkg-box files)
-                           bound in BODY...
-  (initialize-install BODY ...) -
-                  define `unboxed-finalize-install-category-files' method
-                  Arguments (category area files)
-                       bound in BODY...
-  (finalize-install BODY ...) -
-                  define `unboxed-finalize-install-category-files' method
-                  Arguments (category area files)
-                       bound in BODY...
-  (initialize-remove BODY ...) -
-                  define `unboxed-finalize-remove-category-files' method
-                  Arguments (category area files)
-                       bound in BODY...
-  (finalize-remove BODY ...) -
-                  define `unboxed-finalize-remove-category-files' method
-                  Arguments (category area files)
-                       bound in BODY..."
-  (if (and (symbolp name)
-	   (symbolp area))
-      `(unboxed--define-file-category-helper ,name ,area () ,@clauses)
-    (error "unboxed-define-file-category requires name and area symbols, got %S %S" name area)))
-
-(defmacro unboxed-define-simple-category (name area location &optional
-					       pred path-var
-					       install remove
-					       initialize-install initialize-remove
-					       finalize-install finalize-remove)
-  "Define a library category in AREA.
-Arguments:
-  NAME - name of category
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed libraries
-  PRED - predicate function to call with file path
-  PATH-VAR - variable or string specifing the load-path for files of this type
-  INSTALL - function symbol to call for installing package files
-  REMOVE -  function symbol to call for removing package files
-  INITIALIZE-INSTALL - function symbol to call for finalizing installed files
-  INITIALIZE-REMOVE -  function symbol to call for finalizing removed files
-  FINALIZE-INSTALL - function symbol to call for finalizing installed files
-  FINALIZE-REMOVE -  function symbol to call for finalizing removed files"
-  `(unboxed-define-file-category
-    ,name ,area
-    (location ,location)
-    ,@(unless (null pred)
-	`((predicate
-	   (,pred (file-name-concat location file)))))
-    ,@(unless (null path-var) `((path ,path-var)))
-    ,@(unless (null install)
-	`((install
-	   (,install category area pkg pkg-box srcs data-box))))
-    ,@(unless (null remove)
-	`((remove
-	   (,remove category area pkg pkg-box files))))
-    ,@(unless (null initialize-install)
-	`((initialize-install
-	   (,initialize-install category area files))))
-    ,@(unless (null initialize-remove)
-	`((initialize-remove
-	   (,initialize-install category area files))))
-    ,@(unless (null finalize-install)
-	`((finalize-install
-	   (,finalize-install category area files))))
-    ,@(unless (null finalize-remove)
-       `((finalize-remove
-	 (,finalize-install category area files))))))
-
-(defmacro unboxed-define-theme-category (area location)
-  "Define a theme category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed theme files"
-  `(unboxed-define-simple-category theme
-				   ,area
-				   ,location
-				   unboxed-theme-p
-				   custom-theme-load-path
-				   unboxed--basic-category-files-install
-				   unboxed--basic-category-files-remove))
-
-(defmacro unboxed-define-library-category (area location)
-  "Define a library category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed libraries"
-  `(unboxed-define-simple-category library
-				   ,area
-				   ,location
-				   unboxed-library-p
-				   load-path
-				   unboxed--library-category-files-install
-				   unboxed--basic-category-files-remove
-				   unboxed--update-autoloads-file
-				   unboxed--basic-files-remove
-				   unboxed--byte-compile-installed-libraries
-				   unboxed--update-autoloads-file))
-
-(defmacro unboxed-define-byte-compiled-category (area location)
-  "Define a byte-compiled category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed byte-compiled files"
-  `(unboxed-define-simple-category byte-compiled
-				   ,area
-				   ,location
-				   nil
-				   load-path
-				   nil
-				   unboxed--basic-category-files-remove
-				   nil
-				   nil
-				   nil
-				   unboxed--basic-files-remove))
-
-(defmacro unboxed-define-native-compiled-category (area location)
-  "Define a native-compiled category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed native-compiled files"
-  `(unboxed-define-simple-category byte-compiled
-				   ,area
-				   ,location
-				   nil
-				   native-comp-eln-load-path
-				   nil
-				   unboxed--basic-category-files-remove
-				   nil
-				   nil
-				   nil
-				   unboxed--basic-files-remove))
-
-(defmacro unboxed-define-module-category (area location)
-  "Define a module category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of
-             unboxed module (shared library) files"
-  `(unboxed-define-simple-category module
-				   ,area
-				   ,location
-				   unboxed-module-p
-				   load-path
-				   unboxed--basic-category-files-install
-				   unboxed--basic-category-files-remove))
-
-(defmacro unboxed-define-info-category (area location)
-  "Define an info category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of
-             unboxed info files"
-  `(unboxed-define-simple-category info
-				   ,area
-				   ,location
-				   unboxed-info-p
-				   Info-directory-list
-				   unboxed--basic-category-files-install
-				   unboxed--info-category-files-remove
-				   nil
-				   nil
-				   unboxed--info-files-finalize-install))
-
-(defmacro unboxed-define-ignore-category (area)
-  "Define an ignored category in AREA.
-Arguments:
-  AREA - name of unboxing area"
-  `(unboxed-define-simple-category info
-				   ,area
-				   nil
-				   unboxed-compiled-elisp-p))
-
-(defmacro unboxed-define-data-library-category (area location)
-  "Define a data-library category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed data libraries"
-  `(unboxed-define-simple-category data-library
-				   ,area
-				   ,location
-				   unboxed-data-library-p
-				   nil
-				   nil
-				   unboxed--basic-category-files-remove
-				   nil
-				   unboxed--basic-files-remove
-				   unboxed--byte-compile-data-libraries
-				   nil))
-
-(defmacro unboxed-define-data-category (area location)
-  "Define a data category in AREA.
-Arguments:
-  AREA - name of unboxing area
-  LOCATION - variable or string specifying the location of unboxed data files"
-  `(unboxed-define-simple-category data
-				   ,area
-				   ,location
-				   unboxed-data-p
-				   nil
-				   unboxed--relative-category-files-install
-				   unboxed--basic-category-files-remove))
-
-(unboxed-define-theme-category user unboxed-user-theme-directory)
-(unboxed-define-theme-category site unboxed-site-theme-directory)
-
-(unboxed-define-library-category user unboxed-user-library-directory)
-(unboxed-define-library-category site unboxed-site-library-directory) 
-
-(unboxed-define-byte-compiled-category user unboxed-user-library-directory)
-(unboxed-define-byte-compiled-category site unboxed-site-library-directory)
-
-(unboxed-define-native-compiled-category user unboxed-user-native-compiled-directory)
-(unboxed-define-native-compiled-category site unboxed-site-native-compiled-directory)
-
-(unboxed-define-module-category user unboxed-user-library-directory)
-(unboxed-define-module-category site unboxed-site-library-directory)
-
-(unboxed-define-info-category user unboxed-user-info-directory)
-(unboxed-define-info-category site unboxed-site-info-directory)
-
-(unboxed-define-ignore-category user)
-(unboxed-define-ignore-category site)
-
-(unboxed-define-data-library-category user unboxed-user-data-directory)
-(unboxed-define-data-library-category site unboxed-site-data-directory)
-
-(unboxed-define-data-category user unboxed-user-data-directory)
-(unboxed-define-data-category site unboxed-site-data-directory)
-
-			      
- (defmacro unboxed--define-finalize-install (category name args &rest body)
-  "Define an unboxing `finalize-install' method.
-Arguments:
-  CATEGORY - category of the method
-  NAME - the function name that will be bound
-  ARGS - the variables that will be bound (must have 5)
-  BODY - the body of the method"
-  (when (/= (length args) 4)
-    (signal 'unboxed-invalid-finalize-install-signature args))
-  (let ((doc (concat (format "Finalize installation of %s files."
-			     category)
-		     (apply #'format "
-Arguments:
-  %s - Unboxing area record
-  %s - Directory of source files
-  %s - Directory of destination files
-  %s - association list of relative source paths to destination paths"
-			    (mapcar #'unboxed--format-doc-variable args)))))
-    `(defun ,name ,args ,doc
-	    ,@body)))
-
-(defmacro unboxed--define-finalize-installers (prefix categories args &rest body)
-  "Define multiple `finalize-install' methods having the same body.
-Each method will be named `PREFIX-finalize-install-CATEGORY'.
-Arguments:
-  PREFIX - used in generating method names
-  CATEGORIES - list of category names
-  ARGS - as in `unboxed--define-finalize-install'
-  BODY - the body of each method definition"
-  `(progn
-     ,@(mapcar (lambda (cat)
-		 `(unboxed--define-finalize-install
-		   ,cat
-		   ,(intern (format "%s-finalize-install-%s"
-				    prefix
-				    cat))
-		   ,args
-		   ,@body))
-	       categories)))
-
-(defmacro unboxed--define-finalize-remove (category name args &rest body)
-  "Define an unboxing `finalize-remove' method.
-Arguments:
-  CATEGORY - category of the method
-  NAME - the function name that will be bound
-  ARGS - the variables that will be bound (must have 5)
-  BODY - the body of the method"
-  (when (/= (length args) 4)
-    (signal 'unboxed-invalid-finalize-remove-signature args))
-  (let ((doc (concat (format "Finalize removal of %s files."
-			     category)
-		     (apply #'format "
-Arguments:
-  %s - Unboxing area record
-  %s - Directory of source files
-  %s - Directory of destination files
-  %s - association list of relative source paths to destination paths"
-			    (mapcar #'unboxed--format-doc-variable args)))))
-    `(defun ,name ,args ,doc
-	    ,@body)))
-
-(defmacro unboxed--define-finalize-removers (prefix categories args &rest body)
-  "Define multiple `finalize-remove' methods having the same body.
-Each method will be named `PREFIX-finalize-remove-CATEGORY.'
-Arguments:
-  PREFIX - used in generating method names
-  CATEGORIES - list of category names
-  ARGS - as in `unboxed--define-finalize-remove'
-  BODY - the body of each method definition"
-  `(progn
-     ,@(mapcar (lambda (cat)
-		 `(unboxed--define-finalize-remove
-		   ,cat
-		   ,(intern (format "%s-finalize-remove-%s"
-				    prefix
-				    cat))
-		   ,args
-		   ,@body))
-	       categories)))
-								     
-								     
-(unboxed--define-finalize-installers
- unboxed--immediate
- (byte-compiled native-compiled module data theme)
- (_area _src-loc _dst-loc _files)
- nil)
-
-(unboxed--define-finalize-install
- info unboxed--immediate-finalize-install-info (_area _src-loc dst-loc files)
- (let ((ls files)
-       file)
-   (while ls
-     (setq file (cdr (pop ls)))
-     (unboxed--install-info-file-in-dir dst-loc file)))
- nil)
-
-(unboxed--define-finalize-removers
- unboxed--immediate
- (byte-compiled native-compiled module data theme library info)
- (_area _src-loc _dst-loc _files)
- nil)
-
-
-;; rebuild the unboxed library autoloads and byte-compile
-;; the libraries
-;; (unboxed--define-finalize-install
-;;  library unboxed-finalize-install-library (area _src-loc dst-loc files)
-;;  (let ((autoloads-fn (unboxed--area-autoloads-file area))
-;;        (ls files)
-;;        autoloads-file result comp-file new-installed)
-;;    (setq autoloads-file (expand-file-name (file-name-concat dst-loc autoloads-fn)))
-;;    (let ((al-buffer (get-file-buffer autoloads-file)))
-;;      (when al-buffer
-;;        (with-current-buffer al-buffer
-;; 	 (set-buffer-modified-p nil))
-;;        (kill-buffer al-buffer)))
-;;    (make-directory-autoloads dst-loc autoloads-file)
-;;    (let ((default-directory dst-loc))
-;;      (setq result (unboxed--async-byte-compile-file autoloads-file))
-;;      (when (and (stringp result) (> (length result) 0))
-;;        (message "Compile log for %S\n%s" autoloads-file result))
-;;      (while ls
-;;        (setq inst (pop ls))
-;;        (setq comp-file (unboxed--async-byte-compile-library db inst))
-;;        (when comp-file
-;; 	 (setq new-installed (nconc comp-file new-installed)))))
-;;    new-installed))
-
-
-(defun unboxed--install-package (area pkg pkg-box cat-files new-box)
+(defun unboxed--immediate-install-package (area pkg pkg-box cat-files new-box)
   "Install package files in an unboxing area.
 Returns alist of category names mapped to alists of source/destination
 file pairs.
@@ -1489,62 +756,156 @@ Arguments:
   (let ((ls cat-files)
 	(cats (unboxed--area-categories area))
 	(q (make-queue))
-	pr cat install-files cat-name files)
+	pr cat-name files)
     (while ls
       (setq pr (pop ls)
 	    cat-name (car pr)
-	    files (cdr pr)
-	    cat (cdr
-		 (or (assq cat-name cats)
-		     (error "Undefined category %s in area %s"
-			    cat-name
-			    (unboxed--area-name area))))
-	    install-files (unboxed-file-category-install-files cat))
-      (when (and files install-files)
-	(queue-enqueue
-	 q
-	 `(,cat-name
-	   .
-	   ,(funcall install-files area pkg pkg-box files new-box)))))
+	    files (cdr pr))
+      (queue-enqueue
+       q
+       `(,cat-name
+	 .
+	 ,(unboxed-install-package-category cat-name area
+					    pkg pkg-box
+					    files new-box))))
     (queue-all q)))
 
-(defun unboxed--remove-package (area pkg pkg-box cat-files new-box)
+(defun unboxed--immediate-remove-package (area pkg pkg-box cat-files)
   "Remove package files in an unboxing area.
-Returns alist of category names mapped to alists of destination files
-removed.
+Returns alist of category names mapped to alists of source/destination
+file pairs.
 Arguments:
   AREA - unboxing area record
   PKG - symbol identifying package
   PKG-BOX - directory containing the boxed installation of package
-  CAT-FILES - association list mapping category to source/destination file
-              pairs
-  NEW-BOX - path for residual files not installed elsewhere or ignored"
+  CAT-FILES - association list mapping category to source file paths"
   (message "Reboxing %s" pkg)
-  (let ((ls cat-files)
-	(cats (unboxed--area-categories area))
+  (let ((ls (reverse cat-files))
 	(q (make-queue))
-	pr cat remove-files cat-name files)
+	pr cat-name files)
     (while ls
       (setq pr (pop ls)
 	    cat-name (car pr)
-	    files (cdr pr)
-	    cat (cdr
-		 (or (assq cat-name cats)
-		     (error "Undefined category %s in area %s"
-			    cat-name
-			    (unboxed--area-name area))))
-	    remove-files (unboxed-file-category-remove-files cat))
-      (when (and files remove-files)
-	(queue-enqueue
-	 q
-	 `(,cat-name
-	   .
-	   ,(funcall remove-files area pkg pkg-box files new-box)))))
+	    files (cdr pr))
+      (queue-enqueue
+       q
+       `(,cat-name
+	 .
+	 ,(unboxed-remove-package-category cat-name area
+					   pkg pkg-box
+					   files new-box))))
     (queue-all q)))
 
 
-	
+(defun unboxed--immediate-initialize-install-files (area cat-files)
+  "Initialize installation of files in an unboxing area.
+Returns alist of category names mapped to alists of source/destination
+file pairs.
+Arguments:
+  AREA - unboxing area record
+  CAT-FILES - association list mapping category to source file paths"
+  (message "Initializing unboxing")
+  (let ((ls (reverse cat-files))
+	(q (make-queue))
+	pr cat-name files)
+    (while ls
+      (setq pr (pop ls)
+	    cat-name (car pr)
+	    files (cdr pr))
+      (queue-enqueue
+       q
+       `(,cat-name
+	 .
+	 ,(unboxed-initialize-install-category-files cat-name area
+						    files))))
+    (queue-all q)))
 
+(defun unboxed--immediate-finalize-install-files (area cat-files)
+  "Finalize installation of files in an unboxing area.
+Returns alist of category names mapped to alists of source/destination
+file pairs.
+Arguments:
+  AREA - unboxing area record
+  CAT-FILES - association list mapping category to source file paths"
+  (message "Finalizing unboxing")
+  (let ((ls (reverse cat-files))
+	(q (make-queue))
+	pr cat-name files)
+    (while ls
+      (setq pr (pop ls)
+	    cat-name (car pr)
+	    files (cdr pr))
+      (queue-enqueue
+       q
+       `(,cat-name
+	 .
+	 ,(unboxed-finalize-install-category-files cat-name area
+						   files))))
+    (queue-all q)))
+
+(defun unboxed--immediate-initialize-remove-files (area cat-files)
+  "Initialize removal of installed files in an unboxing area.
+Returns alist of category names mapped to alists of source/destination
+file pairs.
+Arguments:
+  AREA - unboxing area record
+  CAT-FILES - association list mapping category to source file paths"
+  (message "Initializing reboxing")
+  (let ((ls (reverse cat-files))
+	(q (make-queue))
+	pr cat-name files)
+    (while ls
+      (setq pr (pop ls)
+	    cat-name (car pr)
+	    files (cdr pr))
+      (queue-enqueue
+       q
+       `(,cat-name
+	 .
+	 ,(unboxed-initialize-remove-category-files cat-name area
+						    files))))
+    (queue-all q)))
+
+(defun unboxed--immediate-finalize-remove-files (area cat-files)
+  "Finalize removal of installed files in an unboxing area.
+Returns alist of category names mapped to alists of source/destination
+file pairs.
+Arguments:
+  AREA - unboxing area record
+  CAT-FILES - association list mapping category to source file paths"
+  (message "Finalizing reboxing")
+  (let ((ls (reverse cat-files))
+	(q (make-queue))
+	pr cat-name files)
+    (while ls
+      (setq pr (pop ls)
+	    cat-name (car pr)
+	    files (cdr pr))
+      (queue-enqueue
+       q
+       `(,cat-name
+	 .
+	 ,(unboxed-finalize-remove-category-files cat-name area
+						  files))))
+    (queue-all q)))
+
+(defun unboxed--install-package (txn pd ajq k)
+  )
+
+(defun unboxed--remove-package (txn pd ajq k)
+  )
+
+(defun unboxed--initialize-install-files (txn ajq k)
+  )
+
+(defun unboxed--finalize-install-files (txn ajq k)
+  )
+
+(defun unboxed--initialize-remove-files (txn ajq k)
+  )
+
+(defun unboxed--finalize-remove-files (txn ajq k)
+  )
 
 (provide 'unboxed-file-management)
 

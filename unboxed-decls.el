@@ -2097,6 +2097,13 @@ Arguments:
       (delete-file logfile))
     log-text))
     
+(eval-and-compile
+  (defun unboxed--format-doc-variable (sym)
+    "Format a variable name SYM for appearance in a docstring."
+    (let ((s (symbol-name sym)))
+      (when (= (aref s 0) ?_)
+	(setq s (substring s 1)))
+      (upcase s))))
 
 
 (provide 'unboxed-decls)
