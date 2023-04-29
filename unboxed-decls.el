@@ -599,6 +599,11 @@ available for loading.
 		      (unboxed-file-category-location (cdr result))))
     result))
 
+(defun unboxed--area-category (area cat-name)
+  "Return the category CAT-NAME of AREA."
+  (let ((result (assq cat-name (unboxed--area-categories area))))
+    (and result (cdr result))))
+
 (cl-defstruct (unboxed-file-category
                (:constructor unboxed-file-category-create)
 	       (:copier unboxed-file-category-copy))
@@ -609,31 +614,14 @@ Other than predicate, the function slots may be nil.
   `area' name of the area using this category definition
   `path-variable' elisp variable for path associated with this
          file category, nil if none
-  `predicate' predicate to classify file given full path
   `location' path for installing this file category
-  `install-files' function to invoke with list of files,
-         returns list of unboxed-installed-file structures.
-  `finalize-install-files' function to invoke with list of
-         unboxed-installed-file structs, run after all packages in a
-         set have completed individual installation task.  This
-         function performs final steps that should be done once per
-         invocation of the installation process on a set of packages,
-         e.g. updating the autoloads file in the unboxed package
-         directory and byte-compiling the installed libraries with the
-         updated autoloads.
-  `remove-files' function to invoke when removing packages on
-         per-package basis
-  `finalize-remove-files' function to invoke when removing packages
-         after doing package-specific steps."
+  `libraries' list of absolute library paths that must be loaded
+              for unboxing operations"
   name
   area
   path-variable
-  predicate
   location
-  install-files
-  finalize-install-files
-  remove-files
-  finalize-remove-files)
+  libraries)
 
 
 (defun unboxed--summarize-file-category (cat)
@@ -712,6 +700,7 @@ for reference.
   source
   id
   file
+  package-desc
   db-category
   created
   log
@@ -860,11 +849,11 @@ installation manager.
 	(vs (unboxed-package-desc-version-string pd)))
     (intern (concat (symbol-name name) "#" vs))))
 
-(defun unboxed--make-installed-file-id (inst)
+(defun unboxed--make-file-id (inst-or-src)
   "Construct identifier of installed file INST."
-  (let ((name (unboxed-installed-file-file inst))
-	(vs (unboxed-installed-file-version inst)))
-    (intern (concat (symbol-name name) "#" vs))))
+  (let ((name (unboxed--file-file inst-or-src))
+	(pkg (unboxed--file-package inst-or-src)))
+    (intern (format "%s#%s" pkg name))))
 
 (defun unboxed--make-source-file-id (src)
   "Construct identifier of source file SRC."
@@ -934,11 +923,6 @@ installation manager.
   "Get category location of package containing source file SRC."
   (unboxed-file-category-location
    (unboxed-source-file-db-category src)))
-
-(defun unboxed-installed-file-package-desc (inst)
-  "Get package descriptor of package containing installed file INST."
-  (unboxed-source-file-package-desc
-   (unboxed-installed-file-source inst)))
 
 (defun unboxed-installed-file-version (inst)
   "Get version string of package containing installed file INST."
@@ -1217,6 +1201,17 @@ Arguments:
      (t
       (signal 'unboxed-invalid-file-record inst-or-src)))))
 
+(defun unboxed--file-package-desc (inst-or-src)
+  "Get the unboxed-package-desc associated with INST-OR-SRC."
+  (when inst-or-src
+    (cond
+     ((unboxed-source-file-p inst-or-src)
+      (unboxed-source-file-package-desc inst-or-src))
+     ((unboxed-installed-file-p inst-or-src)
+      (unboxed-installed-file-package-desc inst-or-src))
+     (t
+      (signal 'unboxed-invalid-file-record inst-or-src)))))
+
 (defun unboxed--file-cat (inst-or-src)
   "Get the file-category name associated with INST-OR-SRC."
   (when inst-or-src
@@ -1257,6 +1252,19 @@ Arguments:
       (unboxed--Cinstalled-file-id inst-or-src))
      (t
       (signal 'unboxed-invalid-file-record inst-or-src)))))
+
+(defun unboxed--file-source (inst)
+  "Get the source file associated with INST."
+  (when inst
+    (cond
+     ((unboxed-installed-file-p inst)
+      (unboxed--file-file
+       (unboxed-installed-file-source inst)))
+     ((unboxed--Cinstalled-file-p inst)
+      (unboxed--Cinstalled-file-source inst))
+     (t
+      (signal 'unboxed-invalid-file-record inst)))))
+
 
 (defun unboxed--file-log (inst)
   "Get the log text associated with INST."
@@ -1324,22 +1332,69 @@ Arguments:
      (t
       (signal 'unboxed-invalid-file-record inst)))))
 
-(defun unboxed--make-installed-file (src dst-file &optional cat)
+(defun unboxed--make-installed-file (src dst-file &optional cat pkg)
   "Make installed-file structure.
 Arguments:
-  SRC - source-file structure
+  SRC - file record
   DST-FILE - file relative to unboxing category location
   CAT - db file-category to which this belongs
-        Default is the category of SRC"
+        Default is the category of SRC
+  PKG - unboxed-package-desc of package to which this belongs
+        Default is the package of SRC"
   (let ((inst
 	 (unboxed-installed-file-create
 	  :source src
 	  :file dst-file
 	  :db-category (or cat
-			   (unboxed--file-db-category src)))))
+			   (unboxed--file-db-category src))
+	  :package-desc (or pkg
+			   (unboxed--file-package-desc src)))))
     (setf (unboxed-installed-file-id inst)
-	  (unboxed--make-installed-file-id inst))
+	  (unboxed--make-file-id inst))
     inst))
+
+(defun unboxed--make-Cinstalled-file (src dst-file &optional cat pkg)
+  "Make installed-file structure.
+Arguments:
+  SRC - file record
+  DST-FILE - file relative to unboxing category location
+  CAT - file category name of installed file
+        Default is the category of SRC
+  PKG - id of package of installed file
+        Default is the package of SRC"
+  (let ((inst
+	 (unboxed--Cinstalled-file-create
+	  :source src
+	  :file dst-file
+	  :category (or cat
+			(unboxed--file-cat src))
+	  :package (or pkg
+		       (unboxed--file-package src)))))
+    (setf (unboxed-installed-file-id inst)
+	  (unboxed--make-file-id inst))
+    inst))
+
+(defun unboxed--import-Cinstalled-file (db c-inst)
+  "Convert concrete installed file into internal db installed-file.
+Arguments:
+  DB - database to import into
+  C-INST - concrete installed-file to import"
+  (let ((pd (unboxed--get-available-package-id
+	     db
+	     (unboxed--file-package c-inst)))
+	(cat (unboxed--get-cat-from-db-by-name
+	      db 
+	      (unboxed--file-cat c-inst)))
+	src)
+    (setq src (unboxed--get-source-file-from-package
+	       pd
+	       (unboxed--make-file-id
+		(unboxed--file-source c-inst))))
+    (unboxed--make-installed-file
+     src
+     (unboxed--file-file c-inst)
+     cat
+     pd)))
 
 
 (defun unboxed--add-source-file-to-package-desc (pd cat fn)
@@ -1681,11 +1736,32 @@ Arguments:
     (when (and q (not (queue-empty q)))
       (queue-first q))))
 
+(defun unboxed--get-available-package-id (db pkg-id)
+  "Get package descriptor for PKG-ID from available packages in DB."
+  (let ((q (gethash pkg-id
+		    (unboxed--db-packages-descs
+		     (unboxed--sexpr-db-available db)))))
+    (when (and q (not (queue-empty q)))
+      (queue-first q))))
+
+(defun unboxed--get-active-package-id (db pkg-id)
+  "Get package descriptor for PKG-ID from active packages in DB."
+  (let ((q (gethash pkg-id
+		    (unboxed--db-packages-descs
+		     (unboxed--db-state-packages
+		      (unboxed--sexpr-db-active db))))))
+    (when (and q (not (queue-empty q)))
+      (queue-first q))))
+
 (defun unboxed--get-cat-from-db-by-name (db catname)
   "Return file-category asociated with CATNAME in database DB."
   (let* ((cats (unboxed--sexpr-db-categories db))
 	 (pr (assq catname cats)))
     (and pr (cdr pr))))
+
+(defun unboxed--get-source-file-from-package (pd file-name)
+  "Return source-file record for FILE-NAME from unboxed-package-desc PD"
+  (gethash file-name (unboxed-package-desc-files pd)))
 
 (defun unboxed--make-boxed-db-state (db packages)
   "Initialize a db state for list of package descriptors PACKAGES."
