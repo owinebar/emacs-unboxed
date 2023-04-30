@@ -160,12 +160,105 @@ or site packages
 (cl-defstruct (unboxed--db-files
 	       (:constructor unboxed--db-files-create)
 	       (:copier unboxed--db-files-copy))
-  "Collection of files associated with packages in db.
+  "Collection of file records.
   Slots:
-  `files' - set of unboxed source- or installed- file objects
-  `locations' - list of source- or installed- files associated to each category"
+  `files' - set of unboxed file records
+  `locations' - list of file records associated to each category"
   (files (make-hash-table))
   (locations (make-queue)))
+
+(cl-defstruct (unboxed--files
+	       (:constructor unboxed--files-create)
+	       (:copier unboxed--files-copy))
+  "Collection of file records.
+  Slots:
+  `type' - type of file records
+  `files' - set of unboxed file records
+  `locations' - category queue of file records"
+  type
+  (files (make-hash-table))
+  (locations (make-queue)))
+
+(cl-defgeneric unboxed--files-add (type files file)
+  "Add file to collection.
+Arguments:
+  TYPE - type of file records
+  FILES - existing collection
+  FILE - file to add"
+  nil)
+
+(defmacro unboxed--define-set-op-helper (name type1 id1)
+  "Helper macro to define set operatoin name.
+Arguments:
+  NAME - set-op
+  TYPE1 - type of file records
+  ID1 - existing collection
+   - file to add"
+  `(cl-defmethod ,(intern (format "unboxed--%s" name)) ((type (eql ',type1))
+							(id (eql ',id1))
+							(set hash-table)
+							obj)
+     ,(format "%s %s OBJ to set SET by %s." ',name ',type1 ',id1)
+     (let ((k (,(intern (format "%s-%s" type1 id1)) obj))
+	   q)
+       (setq q (or (gethash k set)
+		   (puthash k (make-queue) set)))
+       (queue-enqueue q obj))
+     set))
+
+(defmacro unboxed--define-define-op (op subject objects &rest body)
+  (pcase-let ((`(,type0 ,impl0 ,subj-id) subject)
+	      (`((,type1-sym ,obj-id ,id1-sym ,prop-sym) . ,args) objects))
+    (let ((generic-name
+	   (intern (format "unboxed--%s-%s" type0 op)))
+	  (macro-name
+	   (intern (format "unboxed--define-%s-%s" type0 op)))
+	  (docstr-template
+	   (format "%s %%s %s to %s %s by property %%s."
+		   (capitalize (symbol-name op))
+		   (upcase (symbol-name obj-id))
+		   type0
+		   (upcase (symbol-name subj-id))))
+	  (docstr-macro
+	   (format "Convenience macro for unboxed--%s-%s generic."
+		   type0 op))
+	  (generic-docstr
+	   (format "%s %s to %s %s."
+		   (capitalize (symbol-name op))
+		   (upcase (symbol-name obj-id))
+		   type0
+		   (upcase (symbol-name subj-id))))
+	  (type1-var
+	   (intern (format "%s-var" type1-sym)))
+	  (id1-var
+	   (intern (format "%s-var" id1-sym))))
+      `(progn
+	 (defgeneric ,generic-name-expr
+	   (,type1-sym ,id1-sym ,subj-id ,obj-id ,@args)
+	   ,generic-docstr)
+	 (defmacro ,macro-name (,type1-var ,id1-var)
+	   ,docstr-macro
+	   `(cl-defmethod ,',generic-name
+	      ((,type1-id (eql ',,type1-var))
+	       (,id1-sym (eql ',,id1-var))
+	       (,',subj-id ,',impl0)
+	       ,',obj-id ,@',args)
+	      ,(format ,docstr-template
+		 ',,type1-sym
+		 ',,id1-sym)
+	      (let ((,',prop-sym
+		     (,(intern (format "%s-%s" ,type1-var ,id1-var))
+		      ,',obj-id)))
+		,@',body)))))))
+
+(unboxed--define-define-op
+ add (set hash-table set) ((type id obj key))
+ (let ((q (or (gethash key set)
+	      (puthash key (make-queue) set)))
+       (queue-enqueue q obj))
+     set))
+
+(unboxed--define-set-add 
 
 (defun unboxed--summarize-source-file-cat-queue (cq)
   "Summarize category queue CQ with source-file entries"
@@ -174,8 +267,35 @@ or site packages
       ,(mapcar (lambda (pr)
 		 (let ((cat (car pr))
 		       (q (cdr pr)))
-		   `(,cat (queue ,(mapcar #'unboxed--summarize-source-file (queue-all q))))))
+		   `(,cat (queue ,(mapcar #'unboxed--summarize-source-file
+					  (queue-all q))))))
 	       (queue-all cq)))))
+
+(defun unboxed--package-source-file-cat-alist (pd)
+  "Construct a category alist of package source files."
+  (let ((cat-srcs (unboxed--db-files-locations
+		   (unboxed-package-desc-files pd))))
+    (mapcar (lambda (pr)
+	      (let ((cat (car pr))
+		    (q (cdr pr)))
+		`(,cat ,@(mapcar #'unboxed--file-file
+				 (queue-all q)))))
+	    (queue-all cat-srcs))))
+
+(defun unboxed--package-installed-file-cat-alist-install (txn pkg)
+  "Construct a category alist of package source files.
+Arguments:
+  TXN - db transaction record
+  PKG - package id in `install' of transaction deltas"
+  (let ((to-install (unboxed--packages-
+	(cat-srcs (unboxed--db-files-locations
+		   (unboxed-package-desc-files pd))))
+    (mapcar (lambda (pr)
+	      (let ((cat (car pr))
+		    (q (cdr pr)))
+		`(,cat ,@(mapcar #'unboxed--file-file
+				 (queue-all q)))))
+	    (queue-all cat-srcs))))
 
 (defun unboxed--summarize-source-db-files (srcs)
   "Summarize db-files collection of source files SRCS."
@@ -270,6 +390,17 @@ or site packages
       (remove ,(unboxed--summarize-db-state (unboxed--db-delta-remove delta)))
       (install ,(unboxed--summarize-db-state (unboxed--db-delta-install delta))))))
 
+(cl-defstruct (unboxed--delta
+	       (:constructor unboxed--delta-create)
+	       (:copier unboxed--delta-copy))
+  "Generic structure representing a difference between two states.
+  Slots:
+  `type' the type of state being changed
+  `remove' the elements to eliminate
+  `install' the elements requiring installation"
+  type
+  remove
+  install)
 
 ;;; this delta is for changes in available packages
 (cl-defstruct (unboxed--db-packages-delta
@@ -381,7 +512,7 @@ Arguments:
   `FILES-ADD' - list of package descriptor to install into available set
   `ON-COMPLETION' - continuation to invoke after removals and installations
                     are completed"
-  (let ((txn (unboxed--packages-transaction-create
+  (let ((txn (unboxed--db-files-transaction-create
 	      :db db
 	      :on-completion on-completion
 	      :initial (unboxed--copy-installed-db-files
@@ -457,19 +588,23 @@ Arguments:
 (cl-defstruct (unboxed--transaction
 	       (:constructor unboxed--transaction-create)
 	       (:copier unboxed--transaction-copy))
-  "Structure holding data for database transaction in-progress.
+  "Generic structure representing a transaction.
   Slots:
-  `db' Database subject to the transaction
-  `initial'  The initial database state as a transaction-state
-  `todo' The changes to be made by the transaction as a transaction-delta
-  `done' The changes already made by the transaction as a transaction-delta
-  `final' The final database state as a transaction-state
+  `type' Type of transaction
+  `subject' Subject of transaction 
+  `initial'  Initial state of subject
+  `requested' All changes in a delta
+  `todo' Delta representing remaining changes
+  `done' Delta representing completed changes
+  `final' Final state of subject after `done' changes imposed on initial
   `on-completion' continuation invoked when transaction is complete"
-  db
-  (initial (unboxed--db-state-create))
-  (todo (unboxed--db-delta-create))
-  (done (unboxed--db-delta-create))
-  (final (unboxed--db-state-create))
+  type
+  subject
+  initial
+  requested
+  todo
+  done
+  final
   on-completion)
 
 (defun unboxed--summarize-db-transaction (txn)
@@ -2105,6 +2240,65 @@ Arguments:
 	(setq s (substring s 1)))
       (upcase s))))
 
+(cl-defgeneric unboxed--set-add (type id set obj)
+  "Add OBJ of type TYPE to set SET by identifier ID."
+  (error "unboxed--set-add not implemented for (%S %S %S %S)" type id set obj))
+
+(unboxed--define-set-op set-add unboxed-source-file file)
+(unboxed--define-set-op set-add unboxed-Csource-file file)
+(unboxed--define-set-op set-add unboxed-installed-file file)
+(unboxed--define-set-op set-add unboxed-Cinstalled-file file)
+
+(unboxed--define-set-op set-add unboxed-source-file id)
+(unboxed--define-set-op set-add unboxed-Csource-file id)
+(unboxed--define-set-op set-add unboxed-installed-file id)
+(unboxed--define-set-op set-add unboxed-Cinstalled-file id)
+
+(cl-defgeneric unboxed--hash-table-remove (type ht obj)
+  "Remove OBJ of type TYPE to hash table HT."
+  (error "unboxed--hash-table-remove not implemented for (%S %S %S)" type ht obj))
+  
+(cl-defgeneric unboxed--cat-queue-add (type cq obj)
+  "Add OBJ of type TYPE to category queue CQ."
+  (error "unboxed--cat-queue-add not implemented for (%S %S %S)" type cq obj))
+
+(cl-defgeneric unboxed--cat-queue-remove (type cq obj)
+  "Add OBJ of type TYPE to category queue CQ."
+  (error "unboxed--cat-queue-remove not implemented for (%S %S %S)" type cq obj))
+
+
+
+(cl-defmethod unboxed--files-add ((type (eql 'unboxed-source-file))
+				  files
+				  file)
+  "Add unboxed-source-file record.
+  TYPE - type of file records
+  FILES - existing collection
+  FILE - file to add"
+  (let ((ls (unboxed--files-locations files))
+	(fs (unboxed--files-files files)))
+    (unboxed--add-source-file-to-cat-queue
+     ls
+     src)
+    (unboxed--add-source-file
+     fs
+     src)))
+  
+
+(cl-defgeneric unboxed--files-remove (type files file)
+  "Remove file from collection.
+Arguments:
+  TYPE - type of file records
+  FILES - existing collection
+  FILE - file to add"
+  nil)
+
+(cl-defgeneric unboxed--make-files (type files)
+  "Make a collection of file records of the specified type.
+Arguments:
+  TYPE - file record type
+  FILES - files to enter in the collection"
+  nil)
 
 (provide 'unboxed-decls)
 ;;; unboxed-decls.el ends here

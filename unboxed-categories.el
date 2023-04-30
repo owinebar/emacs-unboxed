@@ -124,13 +124,12 @@ not explicitly ignored."
     (and (boundp val) (symbol-value val)))
    (t val)))
 
-(cl-defgeneric unboxed-category-predicate (category area location file)
-  "Test whether FILE  in LOCATION is in CATEGORY for unboxing AREA.
+(cl-defgeneric unboxed-category-predicate (category area path)
+  "Test whether FILE in a package box is in CATEGORY for unboxing AREA.
 Arguments:
   CATEGORY
   AREA
-  LOCATION
-  FILE"
+  PATH"
   nil)
 
 (cl-defgeneric unboxed-install-package-category (category area pkg pkg-box srcs data-box)

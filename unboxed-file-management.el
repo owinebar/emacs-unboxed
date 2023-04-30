@@ -266,7 +266,8 @@ Arguments:
 				  finish-k)
       (async-start
        `(lambda () ,program)
-       ,finish-k)
+       ,finish-k))))
+      
 (defun unboxed--async-byte-compile-files (area pkg dst-cat loc srcs libdirs load-ls setup-exprs ajq k)
   "Byte-compile FILE in asyncronous sandbox.
 Arguments:
@@ -498,7 +499,7 @@ Arguments:
 	  file)
       (while ls
 	(setq file (cdr (pop ls)))
-	(unboxed--install-info-file-in-dir cat-loc file))))
+	(unboxed--install-info-file-in-dir cat-loc file)))))
 
 (defun unboxed--basic-category-files-remove (category area _pkg _pkg-box files)
   "Remove by deletion from category location.
@@ -648,65 +649,6 @@ Arguments:
 ;;   %s - continuation taking final list of installed files")
 
 
-(defmacro unboxed--define-install (category async-name imm-name imm-args dst-loc &rest body)
-  "Define an unboxing `install' method.
-Arguments:
-  CATEGORY - category of the method
-  ASYNC-NAME - the function name bound for async running IMM-NAME
-  IMM-NAME - the function name that will be bound for the immediate action
-  IMM-ARGS - the variables that will be bound for the immediate action (must have 5)
-  DST-LOC - the variable for binding the destination location
-  BODY - the body of the method"
-  (when (/= (length imm-args) 5)
-    (signal 'unboxed-invalid-install-signature imm-args))
-  (let ((doc (concat (format "Install %s files." category)
-		     (apply #'format "
-Arguments:
-  %s - unboxing area record
-  %s - name of package as symbol
-  %s - location of source files (old box)
-  %s - file paths relative to boxed directory of pkg
-  %s - new location of files from PKG for relative loading"
-			    (mapcar #'unboxed--format-doc-variable imm-args)))))
-    `(progn
-       (defun ,imm-name ,imm-args ,doc
-	      (let ((,dst-loc (unboxed--area-category-location
-			       ,(car imm-args) ',category)))
-		,@body))
-       (defun ,async-name (db pd &optional ajq k timeout)
-	 ,@(if (or (null body) (and (null (cdr body)) (atom (car body)) (not (symbolp (car body)))))
-	       ;; if body is a simple constant (e.g. nil), don't spawn a process
-	       body
-	     `((when (null timeout)
-		 (setq timeout unboxed--async-default-time-out))
-	       (let ((area (unboxed--sexpr-db-area db))
-		     (pkg-id (unboxed-package-desc-id pd))
-		     (pkg-loc (unboxed-package-desc-dir pd))
-		     (cq-srcs (unboxed--db-files-locations
-			       (unboxed-package-desc-files pd)))
-		     (cat-loc (or (unboxed--sexpr-db-category-location db
-								       ',category)
-				  (error "Could not find location for category %s"
-					 ',category)))
-		     (data-loc (or
-				(unboxed--sexpr-db-category-location db 'data)
-				(error "Could not find location for data category")))
-		     (setup-exprs unboxed--unboxed-library-paths-loads)
-		     job-id program srcs files)
-		 (setq srcs (unboxed--get-cat-queue cq-srcs ',category)
-		       srcs (when srcs (queue-all srcs))
-		       files (mapcar #'unboxed--file-file srcs)
-		       job-id (intern (format "%s--%s-%s" 'install ',category pkg-id))
-		       program
-		       (unboxed--async-expr
-			result
-			`(progn
-			   ,@setup-exprs
-			   (setq result (,',imm-name ,area ',pkg-id ,pkg-loc ',files ,data-loc)))))
-		 (if ajq
-		     (unboxed--simple-schedule ajq program job-id timeout k)
-		   (,imm-name area pkg-id  pkg-loc files data-loc)))))))))
-
 ;; FIXME - not correct
 (defun unboxed--update-autoloads-file (category area files)
   (let* ((cat (unboxed--area-category area category))
@@ -739,8 +681,6 @@ Arguments:
 				       nil
 				       nil
 				       finish-k))))
-     
-
 
 (defun unboxed--immediate-install-package (area pkg pkg-box cat-files new-box)
   "Install package files in an unboxing area.
@@ -889,6 +829,82 @@ Arguments:
 						  files))))
     (queue-all q)))
 
+(defmacro unboxed--define-transaction-dispatch-method (name imm-name imm-args &rest body)
+  "Define a transaction dispatching method.
+Arguments:
+  NAME - the function name bound for async running IMM-NAME
+  IMM-NAME - the function name that will be bound for the immediate action
+  IMM-ARGS - the variables that will be bound for the immediate action (must have 5)
+  BODY - the body of the method"
+  (let ((pd-var (when (or (memq 'pkg imm-args)
+			  (memq 'pkg-box imm-args)
+			  (memq 'data-box imm-args)
+			  (memq 'srcs imm-args))
+		  '((pd (unboxed--))))
+	(pkg-var (when (memq 'pkg imm-args)
+		   '((pkg (unboxed-package-desc-id pd)))))
+	(pkg-box-var (when (memq 'pkg-box imm-args)
+		       '((pkg-box (unboxed-package-desc-dir pd)))))
+	(data-box-var (when (memq 'data-box imm-args)
+			'((data-box
+			   (file-name-concat
+			    (unboxed--sexpr-db-category-location db 'data)
+			    (symbol-name (unboxed-package-desc-id pd)))))))
+	(srcs-var (when (memq 'srcs imm-args)
+		    '((srcs (mapcar #'unboxed-
+	
+  (when (/= (length imm-args) 4)
+    (signal 'unboxed-invalid-install-signature imm-args))
+  (let ((doc (concat (format "Dispatch %s files." category)
+		     (apply #'format "
+Arguments:
+  %s - unboxing area record
+  %s - name of package as symbol
+  %s - location of source files (old box)
+  %s - file paths relative to boxed directory of pkg
+  %s - new location of files from PKG for relative loading"
+			    (mapcar #'unboxed--format-doc-variable imm-args)))))
+    `(progn
+       (defun ,name (txn ,@(when (memq 'pkg imm-args) '(pd)))
+	 (let ((area (unboxed--sexpr-db-area db)))
+	   (
+	 ,imm-name ,imm-args ,doc
+	      (let ((,dst-loc (unboxed--area-category-location
+			       ,(car imm-args) ',category)))
+		,@body))
+       (defun ,async-name (db pd &optional ajq k timeout)
+	 ,@(if (or (null body) (and (null (cdr body)) (atom (car body)) (not (symbolp (car body)))))
+	       ;; if body is a simple constant (e.g. nil), don't spawn a process
+	       body
+	     `((when (null timeout)
+		 (setq timeout unboxed--async-default-time-out))
+	       (let ((area (unboxed--sexpr-db-area db))
+		     (pkg-id (unboxed-package-desc-id pd))
+		     (pkg-loc (unboxed-package-desc-dir pd))
+		     (cq-srcs (unboxed--db-files-locations
+			       (unboxed-package-desc-files pd)))
+		     (cat-loc (or (unboxed--sexpr-db-category-location db
+								       ',category)
+				  (error "Could not find location for category %s"
+					 ',category)))
+		     (data-loc (or
+				(unboxed--sexpr-db-category-location db 'data)
+				(error "Could not find location for data category")))
+		     (setup-exprs unboxed--unboxed-library-paths-loads)
+		     job-id program srcs files)
+		 (setq srcs (unboxed--get-cat-queue cq-srcs ',category)
+		       srcs (when srcs (queue-all srcs))
+		       files (mapcar #'unboxed--file-file srcs)
+		       job-id (intern (format "%s--%s-%s" 'install ',category pkg-id))
+		       program
+		       (unboxed--async-expr
+			result
+			`(progn
+			   ,@setup-exprs
+			   (setq result (,',imm-name ,area ',pkg-id ,pkg-loc ',files ,data-loc)))))
+		 (if ajq
+		     (unboxed--simple-schedule ajq program job-id timeout k)
+		   
 (defun unboxed--install-package (txn pd ajq k)
   )
 
