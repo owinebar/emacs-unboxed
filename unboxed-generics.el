@@ -29,6 +29,7 @@
   (defun unboxed--argument-list-marker-p (sym)
     "Test whether SYM is an argument list marker"
     (memq sym '(&optional &rest &aux &key &context)))
+
   (defun unboxed--format-doc-variable (sym &optional interface)
     "Format a variable name SYM satisfying INTERFACE for appearance in a docstring."
     (let ((s (symbol-name sym))
@@ -43,13 +44,16 @@
 	(setq p (upcase p))
 	(setq s (format "%s : %s" s p)))
       s))
+
   (defun unboxed--generic-operator-arg-table-line (spec-docstr)
     "Format a single argument table line for SPEC"
     (format "\n  %s" spec-docstr))
+
   (defun unboxed--generic-operator-arg-table-docstring (arg-docs)
     (apply #'concat
 	   (mapcar #'unboxed--generic-operator-arg-table-line
 		   arg-docs)))
+
   (defun unboxed--generic-operator-docstring (op arg-docs)
     "Make a docstring for generic operator OP with argument docstrings ARG-DOCS"
     (let ((arg-table
@@ -60,6 +64,7 @@
 	      (if arg-table
 		  (concat "\nArguments:" arg-table)
 		""))))
+  
   (defun unboxed--accumulate-generic-operator-signature
       (spec docstrings interfaces parameters)
     "Accumulate components of SPECS.
@@ -91,6 +96,7 @@ Arguments:
       (_
        (error "Unrecognized operator argument spec %s" spec)))
     nil)
+
   (defun unboxed--generic-operator-signature (specs)
     (let ((docstrings (make-queue))
 	  (interfaces (make-queue))
@@ -114,6 +120,44 @@ Arguments:
 ;;;  to specific cases by binding the elements of the
 ;;;  specified interfaces and objects.
 
+(eval-and-compile
+  (cl-defgeneric unboxed--expand-specialize-operator (op iface-sigs obj-sigs body)
+    "Expand code to specialize OP with ifaces and objs specializers")
+  (cl-defgeneric unboxed--expand-instantiate-operator (op iface-specs obj-specs)
+    "Expand code to instantiate OP with ifaces and objs specializers"))
+
+(defun unboxed--make-expand-specialize-operator (op iface-sigs obj-sigs body)
+  (pcase-let ((`(,iface-specializing-args ,sp-op)
+	       (unboxed--process-interface-signatures op ifaces))
+	      (`(,obj-specializing-args ,obj-args ,field-args)
+	       (unboxed--process-object-signatures op objs)))
+    (let ((sp-op-expander (intern (formatter "unboxed--expand-%s" sp-op))))
+      `(progn
+	 (eval-and-compile
+	   (cl-defmethod ,opexpander (ifaces objs)
+	     `(cl-defmethod ,',sp-op
+		(,@obj-args 
+		 ,@field-specializing-arguments)
+		,(format ,docstr-template ,@instantiating-fields)
+		,@',body)))
+	 ;; generic to implement for instantiated methods
+	 (cl-defmethod ,gen-op
+	   (,@iface-specializing-args
+	    ,@obj-specializing-args)
+	   ,generic-docstring
+	   (,sp-op ,@obj-args
+		 ,@specializing-field-args))
+	 (cl-defgeneric ,sp-op
+	     (,@obj-args ,@field-args)
+	   ,generic-docstr)
+	 (defmacro ,macro-name ,field-instantiation-specs
+	   ,macro-docstr
+	   `(cl-defmethod ,',specialized-generic
+	      (,@op-args ; generic is gen-symed, do not check specialization twice
+	       ,@field-specializing-arguments)
+	      ,(format ,docstr-template ,@instantiating-fields)
+	      ,@',body))))))
+
 (defmacro unboxed-define-generic-operator (&rest specs)
   "Define  a generic operator OP with argument specs SPECS."
   (pcase-let ((`(,parameters ,interfaces ,docstrings)
@@ -121,12 +165,56 @@ Arguments:
     (put op 'unboxed-generic-operator-parameters parameters)
     (put op 'unboxed-generic-operator-interfaces interfaces)
     (put op 'unboxed-generic-operator-docstrings docstrings)
-    (let ((op (car parameters))
-	  (args (cdr parameters))
-	  (decls (mapcar #'car interfaces))
-	  (arg-docs (mapcar #'cdr docstrings)))
-      `(cl-defgeneric ,op (,@decls ,@args)
-	 ,(unboxed--generic-operator-docstring op arg-docs)))))
+    (let* ((op (car parameters))
+	   (args (cdr parameters))
+	   (decls (mapcar #'car interfaces))
+	   (arg-docs (mapcar #'cdr docstrings))
+	   (spec-expander (intern (formatter "unboxed--expand-spec-%s" op)))
+	   (inst-expander (intern (formatter "unboxed--expand-inst-%s" op))))
+      `(progn
+	 (cl-defgeneric ,op (,@decls ,@args)
+	   ,(unboxed--generic-operator-docstring op arg-docs))
+	 (defmacro ,spec-expander (iface-sigs obj-sigs &rest body)
+	   (pcase-let ((`(,spec-inst-expander
+			  ,spec-op
+			  ,iface-names
+			  ,iface)
+			(unboxed--process-operator-interface-signatures
+			 op ,'decls iface-sigs))
+		       (`(,obj)
+			(unboxed--process-operator-object-signatures
+			 op ,'args obj-sigs)))
+	     `(progn
+		(defmacro ,spec-inst-expander (iface-specs obj-specs)
+		  (pcase-let ((`(,interface-bindings
+				 ,slot-bindings
+				 ,interface-specializers
+				 ,arg-specializers
+				 ,field-specializers
+				 ,docstring
+				 ,body)
+			       (unboxed--process-instantiation-specs
+				op specialized-op specs)
+			       ))
+		    `(cl-defmethod ,',specialized-op
+		       (,@interface-specializers
+			,@arg-specializers
+			,@field-specializers)
+		       ,docstring
+		       (cl-flet ,interface-bindings
+			 (cl-symbol-macrolet	,slot-bindings
+			   ,@body))))))
+	     `(cl-defmethod ,',specialized-generic
+		(,@obj-args
+		 ,@field-specializing-arguments)
+		,(format ,docstr-template ,@instantiating-fields)
+		,@',body))))
+))))
+
+(defmacro unboxed-specialize-generic-operator (op iface-sigs obj-sigs &rest body)
+  (unboxed--expand-specialize-generic-operator op iface-sigs obj-sigs body))
+(defmacro unboxed-instantiate-generic-operator (op iface-specs obj-specs)
+  (unboxed--expand-instantiate-generic-operator op iface-specs obj-specs))
 
 ;;; (unboxed-specialize-generic-operator
 ;;;    op specialized-op
@@ -140,8 +228,42 @@ Arguments:
 ;;;  object signature
 ;;;     (object-parameter object-type-name implementation-type  . slot-signatures)
 ;;;  slot signature
-;;;     (slot-name &optional implementation-type)
+;;;     (slot-name implementation-type variable)
 ;;;
+
+(defmacro unboxed-specialize-generic-operator (gen-op ifaces objs &rest body)
+  (pcase-let ((`(,iface-specializing-args ,sp-op)
+	       (unboxed--process-interface-signatures op ifaces))
+	      (`(,obj-specializing-args ,obj-args ,field-args)
+	       (unboxed--process-object-signatures op objs)))
+    (let ((sp-op-expander (intern (formatter "unboxed--expand-%s" sp-op))))
+      `(progn
+	 (eval-and-compile
+	   (cl-defmethod ,opexpander (ifaces objs)
+	     `(cl-defmethod ,',sp-op
+		(,@obj-args 
+		 ,@field-specializing-arguments)
+		,(format ,docstr-template ,@instantiating-fields)
+		,@',body)))
+	 ;; generic to implement for instantiated methods
+	 (cl-defmethod ,gen-op
+	   (,@iface-specializing-args
+	    ,@obj-specializing-args)
+	   ,generic-docstring
+	   (,sp-op ,@obj-args
+		 ,@specializing-field-args))
+	 (cl-defgeneric ,sp-op
+	     (,@obj-args ,@field-args)
+	   ,generic-docstr)
+	 (defmacro ,macro-name ,field-instantiation-specs
+	   ,macro-docstr
+	   `(cl-defmethod ,',specialized-generic
+	      (,@op-args ; generic is gen-symed, do not check specialization twice
+	       ,@field-specializing-arguments)
+	      ,(format ,docstr-template ,@instantiating-fields)
+	      ,@',body))))))
+    w)
+
 ;;; (unboxed-instantiate-specialized-operator
 ;;;   specialized-op
 ;;;   interface-bindings
@@ -260,6 +382,7 @@ Arguments:
     (macro-name op specialized-op)
   `(defmacro ,macro-name (&rest specs)
      (pcase-let ((`(,interface-bindings
+		    ,slot-bindings
 		    ,interface-specializers
 		    ,arg-specializers
 		    ,field-specializers
@@ -273,7 +396,8 @@ Arguments:
 	   ,@field-specializers)
 	  ,docstring
 	  (cl-flet ,interface-bindings
-	    ,@body)))))
+	    (cl-symbol-macrolet	,slot-bindings
+	      ,@body))))))
 
 (defmacro unboxed--specialize-generic-operator-final
     (op interfaces objects fields methods &rest body)
