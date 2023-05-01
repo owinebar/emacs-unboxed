@@ -28,6 +28,7 @@
 (require 'package)
 (require 'queue)
 (require 'async-job-queue)
+(require 'unboxed-generics)
 
 (defvar unboxed--buffer-name "*Unboxed*"
   "Name of unboxed logging buffer.")
@@ -86,6 +87,12 @@
     (setf (queue-tail q) tail0))
   q)
 
+
+(unboxed-define-generic-operator unboxed--add coll elt)
+(unboxed-define-generic-operator unboxed--delete coll elt)
+
+
+
 (defun unboxed--get-package-desc-version (pd)
   "Get the version string from package-desc PD directory name."
   (let ((version "")
@@ -133,8 +140,6 @@ or site packages
   system-load-path
   categories)
 
-
-
 (defun unboxed--summarize-area (area)
   "Summarize unboxing area AREA."
   (when area
@@ -157,108 +162,396 @@ or site packages
 		   (unboxed--area-categories area))))))
 
 
-(cl-defstruct (unboxed--db-files
-	       (:constructor unboxed--db-files-create)
-	       (:copier unboxed--db-files-copy))
-  "Collection of file records.
-  Slots:
-  `files' - set of unboxed file records
-  `locations' - list of file records associated to each category"
-  (files (make-hash-table))
-  (locations (make-queue)))
-
 (cl-defstruct (unboxed--files
 	       (:constructor unboxed--files-create)
 	       (:copier unboxed--files-copy))
   "Collection of file records.
   Slots:
   `type' - type of file records
-  `files' - set of unboxed file records
+  `paths' - set of unboxed file records by path
   `locations' - category queue of file records"
   type
-  (files (make-hash-table))
+  (paths (make-hash-table))
   (locations (make-queue)))
 
-(cl-defgeneric unboxed--files-add (type files file)
-  "Add file to collection.
-Arguments:
-  TYPE - type of file records
-  FILES - existing collection
-  FILE - file to add"
-  nil)
 
-(defmacro unboxed--define-set-op-helper (name type1 id1)
-  "Helper macro to define set operatoin name.
-Arguments:
-  NAME - set-op
-  TYPE1 - type of file records
-  ID1 - existing collection
-   - file to add"
-  `(cl-defmethod ,(intern (format "unboxed--%s" name)) ((type (eql ',type1))
-							(id (eql ',id1))
-							(set hash-table)
-							obj)
-     ,(format "%s %s OBJ to set SET by %s." ',name ',type1 ',id1)
-     (let ((k (,(intern (format "%s-%s" type1 id1)) obj))
-	   q)
-       (setq q (or (gethash k set)
-		   (puthash k (make-queue) set)))
-       (queue-enqueue q obj))
-     set))
+(cl-defstruct (unboxed--packages
+	       (:constructor unboxed--packages-create)
+	       (:copier unboxed--packages-copy))
+  "Collection of package descriptors which all belong to the same db.
+  Slots:
+  `type' - type of package
+  `descs' - map of versioned package names to unboxed package desc object
+  `named' - map package symbols to queue of versions in boxed area"
+  (descs (make-hash-table))
+  (named (make-hash-table)))
 
-(defmacro unboxed--define-define-op (op subject objects &rest body)
-  (pcase-let ((`(,type0 ,impl0 ,subj-id) subject)
-	      (`((,type1-sym ,obj-id ,id1-sym ,prop-sym) . ,args) objects))
-    (let ((generic-name
-	   (intern (format "unboxed--%s-%s" type0 op)))
-	  (macro-name
-	   (intern (format "unboxed--define-%s-%s" type0 op)))
-	  (docstr-template
-	   (format "%s %%s %s to %s %s by property %%s."
-		   (capitalize (symbol-name op))
-		   (upcase (symbol-name obj-id))
-		   type0
-		   (upcase (symbol-name subj-id))))
-	  (docstr-macro
-	   (format "Convenience macro for unboxed--%s-%s generic."
-		   type0 op))
-	  (generic-docstr
-	   (format "%s %s to %s %s."
-		   (capitalize (symbol-name op))
-		   (upcase (symbol-name obj-id))
-		   type0
-		   (upcase (symbol-name subj-id))))
-	  (type1-var
-	   (intern (format "%s-var" type1-sym)))
-	  (id1-var
-	   (intern (format "%s-var" id1-sym))))
-      `(progn
-	 (defgeneric ,generic-name-expr
-	   (,type1-sym ,id1-sym ,subj-id ,obj-id ,@args)
-	   ,generic-docstr)
-	 (defmacro ,macro-name (,type1-var ,id1-var)
-	   ,docstr-macro
-	   `(cl-defmethod ,',generic-name
-	      ((,type1-id (eql ',,type1-var))
-	       (,id1-sym (eql ',,id1-var))
-	       (,',subj-id ,',impl0)
-	       ,',obj-id ,@',args)
-	      ,(format ,docstr-template
-		 ',,type1-sym
-		 ',,id1-sym)
-	      (let ((,',prop-sym
-		     (,(intern (format "%s-%s" ,type1-var ,id1-var))
-		      ,',obj-id)))
-		,@',body)))))))
+
+(cl-defstruct (unboxed--db-state
+	       (:constructor unboxed--db-state-create)
+	       (:copier unboxed--db-state-copy))
+  "Database state
+  Slots:
+  `packages' - unboxed--db-packages collection
+  `files' - unboxed--db-files collection"
+  (packages (unboxed--db-packages-create))
+  (files (unboxed--db-files-create)))
+
+
+(cl-defstruct (unboxed--delta
+	       (:constructor unboxed--delta-create)
+	       (:copier unboxed--delta-copy))
+  "Generic structure representing a difference between two states.
+  Slots:
+  `type' the type of state being changed
+  `remove' the elements to eliminate
+  `install' the elements requiring installation"
+  type
+  remove
+  install)
+
+(cl-defstruct (unboxed--transaction
+	       (:constructor unboxed--transaction-create)
+	       (:copier unboxed--transaction-copy))
+  "Generic structure representing a transaction.
+  Slots:
+  `type' Type of transaction
+  `subject' Subject of transaction 
+  `initial'  Initial state of subject
+  `requested' All changes in a delta
+  `todo' Delta representing remaining changes
+  `done' Delta representing completed changes
+  `final' Final state of subject after `done' changes imposed on initial
+  `on-completion' continuation invoked when transaction is complete"
+  type
+  subject
+  initial
+  requested
+  todo
+  done
+  final
+  on-completion)
+
+
+;; note - it's entirely possible for a site to have one version of unboxed installed
+;; and for a user to have another version installed.  Therefore, we record
+;; the layout of structures in structure itself to allow some forward/backward
+;; compatibility - eventually
+(cl-defstruct (unboxed--sexpr-db
+	       (:constructor unboxed--sexpr-db-create)
+	       (:copier unboxed--sexpr-db-copy))
+  "Structure holding the tables of data for unboxed in sexpr db representation.
+The available db state may include multiple versions of a package, or
+incompatible packages. The active db state includes only those packages
+available for loading.
+   Slots:
+   `layouts' Association list of data structure layouts used in this db
+   `areas' Association list of area structs in scope for dependency calculations
+   `area' area struct for this database
+   `available' db packages for all boxed packages of area on disk
+   `active' db state for all boxed packages of area available for package loading"
+  layouts
+  areas
+  area
+  (available (unboxed--db-packages-create))
+  (active (unboxed--db-state-create)))
+
+(defun unboxed--sexpr-db-name (db)
+  "Return the name of DB."
+  (unboxed--area-name
+   (unboxed--sexpr-db-area db)))
+
+(defun unboxed--sexpr-db-boxes (db)
+  "Return the box paths of DB."
+  (unboxed--area-boxes
+   (unboxed--sexpr-db-area db)))
+
+(defun unboxed--sexpr-db-path (db)
+  "Return the path to the file for DB."
+  (unboxed--area-db-path
+   (unboxed--sexpr-db-area db)))
+
+(defun unboxed--sexpr-db-categories (db)
+  "Return the file categories of DB."
+  (unboxed--area-categories
+   (unboxed--sexpr-db-area db)))
+
+(defun unboxed--sexpr-db-category-location (db catname)
+  "Return the location category CATNAME of DB."
+  (let ((cats (unboxed--sexpr-db-categories db))
+	result)
+    (setq result (assq catname cats)
+	  result (and result
+		      (unboxed-file-category-location (cdr result))))
+    result))
+
+(defun unboxed--area-category-location (area catname)
+  "Return the location category CATNAME of AREA."
+  (let ((cats (unboxed--area-categories area))
+	result)
+    (setq result (assq catname cats)
+	  result (and result
+		      (unboxed-file-category-location (cdr result))))
+    result))
+
+(defun unboxed--area-category (area cat-name)
+  "Return the category CAT-NAME of AREA."
+  (let ((result (assq cat-name (unboxed--area-categories area))))
+    (and result (cdr result))))
+
+(cl-defstruct (unboxed-file-category
+               (:constructor unboxed-file-category-create)
+	       (:copier unboxed-file-category-copy))
+  "Structure for contents of package and each is installed.
+Other than predicate, the function slots may be nil.
+  Slots:
+  `name' name of file category as symbol
+  `area' name of the area using this category definition
+  `path-variable' elisp variable for path associated with this
+         file category, nil if none
+  `location' path for installing this file category
+  `libraries' list of absolute library paths that must be loaded
+              for unboxing operations"
+  name
+  area
+  path-variable
+  location
+  libraries)
+
+     
+(cl-defstruct (unboxed-source-file
+               (:constructor unboxed-source-file-create)
+	       (:copier unboxed-source-file-struct-copy))
+  "Structure for a file that exists in the boxed package directory tree.
+  Slots:
+  `id' symbol used as unique key for package + file
+  `package-desc' unboxed-package-desc of package containing the file
+  `db-category' unboxed-file-category to which the file belongs
+  `file' location of file relative to package box directory"
+  id
+  package-desc
+  db-category
+  file)
+
+
+(cl-defstruct (unboxed--Csource-file
+               (:constructor unboxed--Csource-file-create)
+	       (:copier unboxed--Csource-file-struct-copy))
+  "Concrete source-file structure for async operations.
+  Slots:
+  `id' symbol used as unique key for package + file
+  `package' package id (versioned)
+  `category' name of unboxed-file-category to which the file belongs
+  `file' location of file relative to package box directory"
+  id
+  package
+  category
+  file)
+
+(cl-defstruct (unboxed-installed-file
+               (:constructor unboxed-installed-file-create)
+	       (:copier unboxed-installed-file-struct-copy))
+  "Structure for a file that is installed for a package.
+An installed-file record may be created even if the installation of
+the file failed, so that the messages/warnings/log will be kept
+for reference.
+  Slots:
+  `source' source-file from which this is derived
+  `id' symbol used as unique key for category + file
+  `file' location of file relative to category-location
+         may not be identical to source file, or even have the same
+         base name, e.g. byte-compiled files
+         Stored as symbol
+  `package-desc' unboxed-package-desc of package file derives from
+  `db-category' unboxed-file-category to which the file belongs
+  `created' boolean indicated whether installing this file succeeded
+  `log' Any relevant data generated during the installation process
+        for this specific file
+  `warnings' *Warnings* buffer during install process
+  `messages' *Messages* buffer during install process"
+  source
+  id
+  file
+  package-desc
+  db-category
+  created
+  log
+  warnings
+  messages)
+
+(cl-defstruct (unboxed--Cinstalled-file
+               (:constructor unboxed--Cinstalled-file-create)
+	       (:copier unboxed--Cinstalled-file-struct-copy))
+  "Concrete form of installed-file for async operations.
+  Slots:
+  `source' id of concrete source file
+  'package' id of concrete package-desc
+  `id' symbol used as unique key for category + file
+  `file' location of file relative to category-location
+         may not be identical to source file, or even have the same
+         base name, e.g. byte-compiled files
+         Stored as symbol
+  `category' category name of file
+  `created' boolean indicated whether installing this file succeeded
+  `log' Any relevant data generated during the installation process
+        for this specific file
+  `warnings' *Warnings* buffer during install process
+  `messages' *Messages* buffer during install process"
+  source
+  package
+  id
+  file
+  category
+  created
+  log
+  warnings
+  messages)
+
+(cl-defstruct (unboxed--struct-layout
+               (:constructor unboxed--struct-layout-create)
+	       (:copier unboxed--struct-layout-copy))
+  "Record of struct layout for instantiating structs
+from a file.
+  Slots:
+  `version' version of this struct
+  `seq-type' Value of (cl-struct-sequence-type 'package-desc)
+  `keys' Keywords for use with constructor for the slot at
+         the corresponding index
+  `slot-info' Value of (cl-struct-slot-info 'pacakge-desc)"
+  (version 1 :read-only t)
+  seq-type
+  keys
+  slot-info)
+
+(cl-defstruct (unboxed-package-desc
+               (:constructor unboxed-package-desc-create)
+	       (:copier unboxed-package-desc-copy)
+	       (:include package-desc))
+  "Package desc structure extended with fields recording its
+installation manager.
+  Slots:
+  `db' unboxed database that owns this package-desc
+  `id' symbol that is unique for package name + version string
+  `single' boolean which is t if the package is for a single library file
+  `simple' boolean which is t if the package directory has no subdirectories
+  `version-string' version string for this package
+  `manager' name of installation manager for this package
+  `files' unboxed--db-files collection of source files in the package box"
+  db
+  id
+  single
+  simple
+  (version-string "0")
+  (manager 'package)
+  files)
+
+(cl-defstruct (unboxed-Cpackage-desc
+               (:constructor unboxed-Cpackage-desc-create)
+	       (:copier unboxed-Cpackage-desc-copy))
+  "Concrete form of unboxed-package-desc.
+  Slots:
+  `name' package name
+  `id' symbol that is unique for package name + version string
+  `area' area containing the package
+  `dir' path to boxed files
+  `single' boolean which is t if the package is for a single library file
+  `simple' boolean which is t if the package directory has no subdirectories
+  `version-string' version string for this package
+  `manager' name of installation manager for this package
+  `files' unboxed--db-files collection of source files in the package box"
+  name
+  id
+  area
+  dir
+  single
+  simple
+  (version-string "0")
+  (manager 'package)
+  files)
 
 (unboxed--define-define-op
- add (set hash-table set) ((type id obj key))
+ add (set hash-table set) ((type obj (id key)))
  (let ((q (or (gethash key set)
 	      (puthash key (make-queue) set)))
        (queue-enqueue q obj))
      set))
 
-(unboxed--define-set-add 
+(unboxed--define-define-op
+ remove (set hash-table set) ((type obj (id key)))
+ (let ((q (gethash key set)))
+   (if q
+       (progn
+	 (setq q (queue-remove q obj))
+	 (if (queue-empty q)
+	     (remhash key set)
+	   (puthash key q set)))
+     (remhash key set))))
+
+
+(unboxed--define-define-op
+ add (category-queue nil cq) ((type obj (id cat-name)))
+ (let ((pr (assq cat-name (queue-all cq))))
+   (unless pr
+     (setq pr (cons cat-name (make-queue)))
+     (queue-enqueue cq pr))
+   (queue-enqueue (cdr pr) obj))
+  cq)
+
+(unboxed--define-define-op
+ remove (category-queue nil cq) ((type obj (id cat-name)))
+ (let ((als (queue-all cq))
+       pr)
+   (setq pr (assq cat-name als))
+   (when pr
+     (let ((q (cdr pr)))
+       (setq q (queue-remove q obj))
+       (when (queue-empty q)
+	 (setq q nil)))
+     (unless q
+       (queue-remq cq pr))))
+ cq)
+
+(unboxed--define-define-op
+ add (unboxed--files nil files) ((type obj (category cat) (path file)))
+ (unboxed--set-add type path (unboxed--files-paths files) obj)
+ (unboxed--category-queue-add type category (unboxed--files-locations files) obj))
+
+(unboxed--define-define-op
+ remove (unboxed--files nil files) ((type obj (category cat) (path file)))
+ (unboxed--set-add type path (unboxed--files-paths files) obj)
+ (unboxed--category-queue-add type category (unboxed--files-locations files) obj))
+
+(unboxed--define-define-op
+ add (unboxed--packages nil pkgs) ((type pkg (name pkg-name) (id pkg-id)))
+ (unboxed--set-add type name (unboxed--packages-named pkgs) pkg)
+ (unboxed--set-add type id (unboxed--packages-descs pkgs) pkg))
+
+(unboxed--define-define-op
+ remove (unboxed--packages nil pkgs) ((type pkg (name pkg-name) (id pkg-id)))
+ (unboxed--set-remove type name (unboxed--packages-named pkgs) pkg)
+ (unboxed--set-remove type id (unboxed--packages-descs pkgs) pkg))
+
+(unboxed--define-define-op
+ add-package (unboxed--state nil state) ((type obj (name obj-name) (id obj-id)))
+ (unboxed--unboxed--packages-add type name (unboxed--packages-named pkgs) pkg)
+ (unboxed--unboxed--packages-add type id (unboxed--packages-descs pkgs) pkg))
+
+(unboxed--define-define-op
+ add-package (unboxed--state nil state) ((type obj (name obj-name) (id obj-id)))
+ (unboxed--unboxed--packages-add type name (unboxed--packages-named pkgs) pkg)
+ (unboxed--unboxed--packages-add type id (unboxed--packages-descs pkgs) pkg))
+
+(unboxed--define-define-op
+ remove (unboxed--packages nil pkgs) ((type pkg (name pkg-name) (id pkg-id)))
+ (unboxed--set-remove type name (unboxed--packages-named pkgs) pkg)
+ (unboxed--set-remove type id (unboxed--packages-descs pkgs) pkg))
+
+
+(unboxed--define-set-add unboxed-source-file file)
+(unboxed--define-set-add unboxed-source-file id)
+(unboxed--define-category-queue-add unboxed-source-file category)
+(unboxed--define-unboxed--files-add unboxed-source-file category file)
+
 
 (defun unboxed--summarize-source-file-cat-queue (cq)
   "Summarize category queue CQ with source-file entries"
@@ -354,15 +647,6 @@ Arguments:
 		(queue-all r))))))
 
 
-(cl-defstruct (unboxed--db-state
-	       (:constructor unboxed--db-state-create)
-	       (:copier unboxed--db-state-copy))
-  "Database state
-  Slots:
-  `packages' - unboxed--db-packages collection
-  `files' - unboxed--db-files collection"
-  (packages (unboxed--db-packages-create))
-  (files (unboxed--db-files-create)))
 
 (defun unboxed--summarize-db-state (state)
   "Summarize db-state  STATE."
@@ -389,18 +673,6 @@ Arguments:
     `(db-delta
       (remove ,(unboxed--summarize-db-state (unboxed--db-delta-remove delta)))
       (install ,(unboxed--summarize-db-state (unboxed--db-delta-install delta))))))
-
-(cl-defstruct (unboxed--delta
-	       (:constructor unboxed--delta-create)
-	       (:copier unboxed--delta-copy))
-  "Generic structure representing a difference between two states.
-  Slots:
-  `type' the type of state being changed
-  `remove' the elements to eliminate
-  `install' the elements requiring installation"
-  type
-  remove
-  install)
 
 ;;; this delta is for changes in available packages
 (cl-defstruct (unboxed--db-packages-delta
@@ -585,28 +857,6 @@ Arguments:
     
 
 
-(cl-defstruct (unboxed--transaction
-	       (:constructor unboxed--transaction-create)
-	       (:copier unboxed--transaction-copy))
-  "Generic structure representing a transaction.
-  Slots:
-  `type' Type of transaction
-  `subject' Subject of transaction 
-  `initial'  Initial state of subject
-  `requested' All changes in a delta
-  `todo' Delta representing remaining changes
-  `done' Delta representing completed changes
-  `final' Final state of subject after `done' changes imposed on initial
-  `on-completion' continuation invoked when transaction is complete"
-  type
-  subject
-  initial
-  requested
-  todo
-  done
-  final
-  on-completion)
-
 (defun unboxed--summarize-db-transaction (txn)
   "Summarize db-transaction TXN."
   (when txn
@@ -653,44 +903,6 @@ Arguments:
     txn))
     
 
-;; note - it's entirely possible for a site to have one version of unboxed installed
-;; and for a user to have another version installed.  Therefore, we record
-;; the layout of structures in structure itself to allow some forward/backward
-;; compatibility - eventually
-(cl-defstruct (unboxed--sexpr-db
-	       (:constructor unboxed--sexpr-db-create)
-	       (:copier unboxed--sexpr-db-copy))
-  "Structure holding the tables of data for unboxed in sexpr db representation.
-The available db state may include multiple versions of a package, or
-incompatible packages. The active db state includes only those packages
-available for loading.
-   Slots:
-   `layouts' Association list of data structure layouts used in this db
-   `areas' Association list of area structs in scope for dependency calculations
-   `area' area struct for this database
-   `available' db packages for all boxed packages of area on disk
-   `active' db state for all boxed packages of area available for package loading"
-  layouts
-  areas
-  area
-  (available (unboxed--db-packages-create))
-  (active (unboxed--db-state-create)))
-
-(defun unboxed--sexpr-db-name (db)
-  "Return the name of DB."
-  (unboxed--area-name
-   (unboxed--sexpr-db-area db)))
-
-(defun unboxed--sexpr-db-boxes (db)
-  "Return the box paths of DB."
-  (unboxed--area-boxes
-   (unboxed--sexpr-db-area db)))
-
-(defun unboxed--sexpr-db-path (db)
-  "Return the path to the file for DB."
-  (unboxed--area-db-path
-   (unboxed--sexpr-db-area db)))
-
 (defun unboxed--summarize-sexpr-db (db)
   "Summarize database DB."
   (when db
@@ -711,53 +923,6 @@ available for loading.
 ;;   (unboxed--area-datadir-pats
 ;;    (unboxed--sexpr-db-area db)))
 
-(defun unboxed--sexpr-db-categories (db)
-  "Return the file categories of DB."
-  (unboxed--area-categories
-   (unboxed--sexpr-db-area db)))
-
-(defun unboxed--sexpr-db-category-location (db catname)
-  "Return the location category CATNAME of DB."
-  (let ((cats (unboxed--sexpr-db-categories db))
-	result)
-    (setq result (assq catname cats)
-	  result (and result
-		      (unboxed-file-category-location (cdr result))))
-    result))
-
-(defun unboxed--area-category-location (area catname)
-  "Return the location category CATNAME of AREA."
-  (let ((cats (unboxed--area-categories area))
-	result)
-    (setq result (assq catname cats)
-	  result (and result
-		      (unboxed-file-category-location (cdr result))))
-    result))
-
-(defun unboxed--area-category (area cat-name)
-  "Return the category CAT-NAME of AREA."
-  (let ((result (assq cat-name (unboxed--area-categories area))))
-    (and result (cdr result))))
-
-(cl-defstruct (unboxed-file-category
-               (:constructor unboxed-file-category-create)
-	       (:copier unboxed-file-category-copy))
-  "Structure for contents of package and each is installed.
-Other than predicate, the function slots may be nil.
-  Slots:
-  `name' name of file category as symbol
-  `area' name of the area using this category definition
-  `path-variable' elisp variable for path associated with this
-         file category, nil if none
-  `location' path for installing this file category
-  `libraries' list of absolute library paths that must be loaded
-              for unboxing operations"
-  name
-  area
-  path-variable
-  location
-  libraries)
-
 
 (defun unboxed--summarize-file-category (cat)
   "Construct non-recursive summary of category CAT."
@@ -773,35 +938,6 @@ Other than predicate, the function slots may be nil.
     (finalize-install-files ,(and (unboxed-file-category-finalize-install-files cat) t))
     (remove-files ,(and (unboxed-file-category-remove-files cat) t))
     (finalize-remove-files ,(and (unboxed-file-category-finalize-remove-files cat) t))))
-     
-(cl-defstruct (unboxed-source-file
-               (:constructor unboxed-source-file-create)
-	       (:copier unboxed-source-file-struct-copy))
-  "Structure for a file that exists in the boxed package directory tree.
-  Slots:
-  `id' symbol used as unique key for package + file
-  `package-desc' unboxed-package-desc of package containing the file
-  `db-category' unboxed-file-category to which the file belongs
-  `file' location of file relative to package box directory"
-  id
-  package-desc
-  db-category
-  file)
-
-
-(cl-defstruct (unboxed--Csource-file
-               (:constructor unboxed--Csource-file-create)
-	       (:copier unboxed--Csource-file-struct-copy))
-  "Concrete source-file structure for async operations.
-  Slots:
-  `id' symbol used as unique key for package + file
-  `package' package id (versioned)
-  `category' name of unboxed-file-category to which the file belongs
-  `file' location of file relative to package box directory"
-  id
-  package
-  category
-  file)
 
 (defun unboxed--summarize-source-file (src)
   "Summarize source file SRC."
@@ -810,65 +946,6 @@ Other than predicate, the function slots may be nil.
     (pkg ,(unboxed-package-desc-name (unboxed-source-file-package-desc src)))
     (cat ,(unboxed-file-category-name (unboxed-source-file-db-category src)))
     (file ,(unboxed-source-file-file src))))
-
-(cl-defstruct (unboxed-installed-file
-               (:constructor unboxed-installed-file-create)
-	       (:copier unboxed-installed-file-struct-copy))
-  "Structure for a file that is installed for a package.
-An installed-file record may be created even if the installation of
-the file failed, so that the messages/warnings/log will be kept
-for reference.
-  Slots:
-  `source' source-file from which this is derived
-  `id' symbol used as unique key for category + file
-  `file' location of file relative to category-location
-         may not be identical to source file, or even have the same
-         base name, e.g. byte-compiled files
-         Stored as symbol
-  `package-desc' unboxed-package-desc of package file derives from
-  `db-category' unboxed-file-category to which the file belongs
-  `created' boolean indicated whether installing this file succeeded
-  `log' Any relevant data generated during the installation process
-        for this specific file
-  `warnings' *Warnings* buffer during install process
-  `messages' *Messages* buffer during install process"
-  source
-  id
-  file
-  package-desc
-  db-category
-  created
-  log
-  warnings
-  messages)
-
-(cl-defstruct (unboxed--Cinstalled-file
-               (:constructor unboxed--Cinstalled-file-create)
-	       (:copier unboxed--Cinstalled-file-struct-copy))
-  "Concrete form of installed-file for async operations.
-  Slots:
-  `source' id of concrete source file
-  'package' id of concrete package-desc
-  `id' symbol used as unique key for category + file
-  `file' location of file relative to category-location
-         may not be identical to source file, or even have the same
-         base name, e.g. byte-compiled files
-         Stored as symbol
-  `category' category name of file
-  `created' boolean indicated whether installing this file succeeded
-  `log' Any relevant data generated during the installation process
-        for this specific file
-  `warnings' *Warnings* buffer during install process
-  `messages' *Messages* buffer during install process"
-  source
-  package
-  id
-  file
-  category
-  created
-  log
-  warnings
-  messages)
 
 (defun unboxed--summarize-installed-file (inst)
   "Summarize installed file INST."
@@ -893,68 +970,6 @@ for reference.
    :log (unboxed-installed-file-log inst)
    :warnings (unboxed-installed-file-warnings inst)
    :messages (unboxed-installed-file-messages inst)))
-
-(cl-defstruct (unboxed--struct-layout
-               (:constructor unboxed--struct-layout-create)
-	       (:copier unboxed--struct-layout-copy))
-  "Record of struct layout for instantiating structs
-from a file.
-  Slots:
-  `version' version of this struct
-  `seq-type' Value of (cl-struct-sequence-type 'package-desc)
-  `keys' Keywords for use with constructor for the slot at
-         the corresponding index
-  `slot-info' Value of (cl-struct-slot-info 'pacakge-desc)"
-  (version 1 :read-only t)
-  seq-type
-  keys
-  slot-info)
-
-(cl-defstruct (unboxed-package-desc
-               (:constructor unboxed-package-desc-create)
-	       (:copier unboxed-package-desc-copy)
-	       (:include package-desc))
-  "Package desc structure extended with fields recording its
-installation manager.
-  Slots:
-  `db' unboxed database that owns this package-desc
-  `id' symbol that is unique for package name + version string
-  `single' boolean which is t if the package is for a single library file
-  `simple' boolean which is t if the package directory has no subdirectories
-  `version-string' version string for this package
-  `manager' name of installation manager for this package
-  `files' unboxed--db-files collection of source files in the package box"
-  db
-  id
-  single
-  simple
-  (version-string "0")
-  (manager 'package)
-  files)
-
-(cl-defstruct (unboxed-Cpackage-desc
-               (:constructor unboxed-Cpackage-desc-create)
-	       (:copier unboxed-Cpackage-desc-copy))
-  "Concrete form of unboxed-package-desc.
-  Slots:
-  `name' package name
-  `id' symbol that is unique for package name + version string
-  `area' area containing the package
-  `dir' path to boxed files
-  `single' boolean which is t if the package is for a single library file
-  `simple' boolean which is t if the package directory has no subdirectories
-  `version-string' version string for this package
-  `manager' name of installation manager for this package
-  `files' unboxed--db-files collection of source files in the package box"
-  name
-  id
-  area
-  dir
-  single
-  simple
-  (version-string "0")
-  (manager 'package)
-  files)
 
 (defun unboxed--summarize-package-desc (pd)
   "Summarize unboxed package descriptor PD."
@@ -2232,14 +2247,6 @@ Arguments:
       (delete-file logfile))
     log-text))
     
-(eval-and-compile
-  (defun unboxed--format-doc-variable (sym)
-    "Format a variable name SYM for appearance in a docstring."
-    (let ((s (symbol-name sym)))
-      (when (= (aref s 0) ?_)
-	(setq s (substring s 1)))
-      (upcase s))))
-
 (cl-defgeneric unboxed--set-add (type id set obj)
   "Add OBJ of type TYPE to set SET by identifier ID."
   (error "unboxed--set-add not implemented for (%S %S %S %S)" type id set obj))
