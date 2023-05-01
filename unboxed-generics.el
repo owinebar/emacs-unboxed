@@ -103,6 +103,16 @@ Arguments:
 	,(queue-all docstrings)))))
 
 
+;;;
+;;;  The definition of generic operator and specialization
+;;;  support a C#-ish flavor of genericity in which
+;;;  interfaces are allowed to specify function signatures
+;;;  and objects may specify and bind slots in specialized
+;;;  implementations.  The generic operator names the
+;;;  object and interface parameters.
+;;;  These specialized forms are then instantiated
+;;;  to specific cases by binding the elements of the
+;;;  specified interfaces and objects.
 
 (defmacro unboxed-define-generic-operator (&rest specs)
   "Define  a generic operator OP with argument specs SPECS."
@@ -118,9 +128,35 @@ Arguments:
       `(cl-defgeneric ,op (,@decls ,@args)
 	 ,(unboxed--generic-operator-docstring op arg-docs)))))
 
-;;; (unboxed-specialize-generic-operator-subject op subject-spec object-specs . body)
-;;; subject-spec = (id subj-op impl-type . field-specs)
-;;; object-spec = (id generic-type impl-type impl-var . field-specs)
+;;; (unboxed-specialize-generic-operator
+;;;    op specialized-op
+;;;    interface-signatures
+;;;    object-signatures
+;;;    . body)
+;;; interface signature
+;;;     (interface-parameter interface-name . method-signatures)
+;;;  method signature
+;;;     (method-name . argument-list)
+;;;  object signature
+;;;     (object-parameter object-type-name implementation-type  . slot-signatures)
+;;;  slot signature
+;;;     (slot-name &optional implementation-type)
+;;;
+;;; (unboxed-instantiate-specialized-operator
+;;;   specialized-op
+;;;   interface-bindings
+;;;   object-bindings)
+;;;
+;;;   interface-binding
+;;;     (interface-name . method-bindings)
+;;;   method-binding
+;;;     (method-name function-expression)
+;;;   object-binding
+;;;     (object-type-name . slot-bindings)
+;;;   slot-binding
+;;;     (slot-name slot-accessor &optional slot-specializer)
+;;; op-spec = (interface name doc)
+;;; object-spec = (interface id impl-type impl-var . field-specs)
 ;;; field-spec = (slot variable &optional constraint)
 ;;;
 ;;;   defines generic method
@@ -133,6 +169,7 @@ Arguments:
 ;;;  specialized
 ;;;  with the generic body
 ;;; specialized according to the 
+
 
 (eval-and-compile
   (defun unboxed--process-field-spec
@@ -154,6 +191,7 @@ Arguments:
 	       `(,',slot (eql ',,slot-var))
 	       nil)))
 	  (_ (error "Unrecognized object field spec %s" field-spec)))))
+  
   (defun unboxed--process-interface-spec
       (lambda (obj-spec)
 	(pcase obj-spec
@@ -179,7 +217,8 @@ Arguments:
 	     ;; list (macro-var method-args bindings
 	     `(,macro-var
 	       `(,',slot (eql ',,slot-var))
-	       nil)))
+	       nil))))))
+  
   (defun unboxed--process-object-spec
       (lambda (obj-spec)
 	(pcase obj-spec
@@ -206,7 +245,16 @@ Arguments:
 	     `(,macro-var
 	       `(,',slot (eql ',,slot-var))
 	       nil)))
-	  (_ (error "Unrecognized object field spec %s" field-spec)))))))))
+	  (_ (error "Unrecognized object field spec %s" field-spec))))))
+
+(defun unboxed--process-instantiation-specs (sp-op specs)
+  "Analyze instantiation specs SPECS for specialized generic operator SP-OP."
+  (let ((interface-signatures (get sp-op 'unboxed-interface-signatures))
+	(object-signatures (get sp-op 'unboxed-object-signatures))
+	(docstrings (get sp-op 'unboxed-operator-docstrings))
+	(body (get sp-op 'unboxed-operator-body)))
+    
+    ))
 
 (defmacro unboxed--specializing-operator-macro
     (macro-name op specialized-op)
@@ -216,7 +264,9 @@ Arguments:
 		    ,arg-specializers
 		    ,field-specializers
 		    ,docstring
-		    ,body)))
+		    ,body)
+		  (unboxed--process-instantiation-specs op specialized-op specs)
+		  ))
        `(cl-defmethod ,',specialized-op
 	  (,@interface-specializers
 	   ,@arg-specializers
@@ -353,19 +403,31 @@ Arguments:
 		     ,@',body))))))))))
 
 (unboxed-define-generic-operator unboxed--insert
-				 acc elt)
+				 (collection acc)
+				 (item elt))
 
 (unboxed-define-generic-operator unboxed--delete
-				 acc elt)
+				 (collection acc)
+				 (item elt))
 
 (unboxed-define-generic-operator unboxed--find
-				 acc elt)
+				 (collection acc)
+				 (item elt))
 
 (unboxed-define-generic-operator unboxed--associate
-				 dict key value)
+				 (map dict)
+				 (index key)
+				 value)
+
+(unboxed-define-generic-operator unboxed--disassociate
+				 (map dict)
+				 (index key)
+				 value)
 
 (unboxed-define-generic-operator unboxed--lookup
-				 dict key)
+				 (map dict)
+				 (index key)
+				 value)
 
 (provide 'unboxed-generics)
 ;;; unboxed-generics.el ends here
