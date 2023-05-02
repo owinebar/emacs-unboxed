@@ -1,4 +1,4 @@
-;;; unboxed-generics.el --- Generic operator machinery   -*- lexical-binding: t; -*-
+;;; icg.el --- Interface constrained generics   -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
@@ -21,7 +21,20 @@
 
 ;;; Commentary:
 
-;; Generic operator machinery support for unboxed
+;; Support for specifying generic code based on interface constraints
+;; Flavor of genericity similar to that found in .NET languages
+;;
+;; Generic methods in three stages
+;; First, declare generic with interface symbols associated to parameters
+;; Second, specialize the generic by declaring signatures of required methods
+;;    associated with each interface and abstract slot names associated to each
+;;    parameter (which are also part of the interface definition)
+;;    Provide the generic body of the method with the method names bound in
+;;    the function namespace and the slots bound as variables
+;; Third, instantiate the generic by binding the interface methods and
+;;    implementation types of the object parameters to the generic parameters
+;;    
+
 
 ;;; Code:
 
