@@ -2083,7 +2083,7 @@ Arguments:
 	 ,rv))))
 
 (defmacro unboxed--async-expr (rv prog &optional logfile warnfile msgfile)
-  "Avoide quoting RV when using `unboxed--wrap-async-expr' on PROG."
+  "Avoid quoting RV when using `unboxed--wrap-async-expr' on PROG."
   `(unboxed--wrap-async-expr ',rv ,prog ,logfile ,warnfile ,msgfile))
 
 
