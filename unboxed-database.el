@@ -442,7 +442,7 @@ Arguments:
 (defun unboxed--finalize-unbox-package-list (_ajq db cats txn)
   "Finalize unboxing transaction TXN in database DB.
 Arguments:
-  _AJQ - Job queue used for installing package-specific files
+  AJQ - Job queue used for installing package-specific files
   DB - package database
   CATS - file categories from DB
   TXN - transaction record"
